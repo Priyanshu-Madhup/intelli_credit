@@ -357,7 +357,7 @@ def load_index(
 # 6. FULL PIPELINE
 # ---------------------------------------------------------------------------
 
-def process_document(file_path: str) -> Dict:
+def process_document(file_path: str, doc_type: str = "general", append: bool = False) -> Dict:
     """
     Run the complete document processing pipeline on a PDF file.
 
@@ -386,9 +386,17 @@ def process_document(file_path: str) -> Dict:
         full_text = extract_text_from_pdf(file_path)
 
         # Step 1b: Save raw text so chart_service & credit_scorer can use it
+        # raw_text_path = os.path.join(os.path.dirname(FAISS_INDEX_PATH) or '.', 'raw_document_text.txt')
+        # with open(raw_text_path, 'w', encoding='utf-8') as _f:
+        #     _f.write(full_text)
+
+
         raw_text_path = os.path.join(os.path.dirname(FAISS_INDEX_PATH) or '.', 'raw_document_text.txt')
-        with open(raw_text_path, 'w', encoding='utf-8') as _f:
-            _f.write(full_text)
+        write_mode = 'a' if append and os.path.exists(raw_text_path) else 'w'
+        with open(raw_text_path, write_mode, encoding='utf-8') as _f:
+           if write_mode == 'a':
+              _f.write(f"\n\n--- {doc_type.upper()} DOCUMENT: {os.path.basename(file_path)} ---\n\n")
+              _f.write(full_text)
 
         # Step 1c: Detect company name from document text
         detected_company = extract_company_name(full_text)
@@ -408,14 +416,32 @@ def process_document(file_path: str) -> Dict:
         source_name = os.path.basename(file_path)
         for chunk in chunks:
             chunk["source"] = source_name
+            chunk["doc_type"] = doc_type 
             chunk.setdefault("page", None)
 
         # Step 5: Embed
         embeddings = embed_chunks(chunks)
 
         # Step 6: Index and persist
-        index, _ = create_faiss_index(embeddings)
-        save_index(index, chunks)
+        # index, _ = create_faiss_index(embeddings)
+        # save_index(index, chunks)
+
+        if append:
+            try:
+                 existing_index, existing_metadata = load_index()
+                 new_index, _ = create_faiss_index(embeddings)
+                 # Merge: add new vectors into the existing index
+                 existing_index.add(np.vstack([e.astype(np.float32) for e in embeddings]))
+                 merged_metadata = existing_metadata + chunks
+                 save_index(existing_index, merged_metadata)
+            except FileNotFoundError:
+                 # No existing index yet — create fresh
+                 index, _ = create_faiss_index(embeddings)
+                 save_index(index, chunks)
+        else:
+            # append=False means fresh start (first doc in a new assessment)
+            index, _ = create_faiss_index(embeddings)
+            save_index(index, chunks)
 
         return {
             "num_chunks": len(chunks),

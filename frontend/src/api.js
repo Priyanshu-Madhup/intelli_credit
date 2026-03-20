@@ -8,9 +8,15 @@ const BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
  */
 export async function uploadDocuments(filesMap) {
   const results = [];
-  for (const [, file] of Object.entries(filesMap)) {
+  const entries = Object.entries(filesMap);  // [ ['bank', File], ['annual', File], ... ]
+
+  for (let i = 0; i < entries.length; i++) {
+    const [docType, file] = entries[i];
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('doc_type', docType);          // e.g. "bank", "gst", "annual"
+    formData.append('append', i > 0 ? 'true' : 'false');  // first doc = fresh, rest = append
+
     const res = await fetch(`${BASE_URL}/documents/process`, {
       method: 'POST',
       body: formData,
