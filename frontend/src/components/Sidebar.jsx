@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   LayoutDashboard, FileSearch, Brain, Globe, Award,
-  FileText, Zap, ChevronRight, Settings, LogOut
+  FileText, Zap, ChevronRight, Settings, LogOut, BarChart2
 } from 'lucide-react';
 
 const navItems = [
@@ -12,6 +12,7 @@ const navItems = [
   { id: 'recommendation',  label: 'Credit Decision',     icon: Award },
   { id: 'report',          label: 'CAM Report',          icon: FileText },
   { id: 'gst', label: 'GST Validator', icon: FileText },
+  { id: 'benchmark', label: 'Sector Benchmark', icon: BarChart2 }
 ];
 
 export default function Sidebar({ currentPage, onNavigate }) {

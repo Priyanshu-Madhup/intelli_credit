@@ -8,6 +8,7 @@ import ResearchInsights from './pages/ResearchInsights';
 import CreditRecommendation from './pages/CreditRecommendation';
 import CAMReport from './pages/CAMReport';
 import GSTValidation from './pages/GSTValidation';
+import SectorBenchmark from './pages/SectorBenchmark';
 
 export default function App() {
   const [page, setPage] = useState('dashboard');
@@ -21,6 +22,7 @@ export default function App() {
       case 'recommendation': return <CreditRecommendation onNavigate={setPage} />;
       case 'report':         return <CAMReport />;
       case 'gst': return <GSTValidation />;
+      case 'benchmark': return <SectorBenchmark />;
       default:               return <Dashboard onNavigate={setPage} />;
     }
   };
