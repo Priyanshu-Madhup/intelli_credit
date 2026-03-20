@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import {
   Download, ChevronDown, ChevronUp, Building2,
-  Users, BarChart2, AlertTriangle, Award, Printer, Share2
+  Users, BarChart2, AlertTriangle, Award, Printer, Share2 , Loader
 } from 'lucide-react';
+import { downloadCAM } from '../api';
 
 const riskLevelStyle = {
   high:   'bg-red-100 text-red-700',
@@ -30,6 +31,7 @@ export default function CAMReport() {
   const [open, setOpen] = useState({ company: true, financial: false, risk: false, recommendation: false });
   const [a, setA] = useState(null);   // assessment
   const [co, setCo] = useState(null); // company meta
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     try {
@@ -94,9 +96,25 @@ export default function CAMReport() {
           <button className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl transition-all">
             <Share2 size={13} /> Share
           </button>
-          <button className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 rounded-xl transition-all shadow-md shadow-blue-500/20 hover:-translate-y-0.5">
-            <Download size={15} /> Download PDF
-          </button>
+          <button
+  onClick={async () => {
+    setDownloading(true);
+    try {
+      await downloadCAM(companyName, sector, a?.requested_loan_cr ?? 5);
+    } catch (err) {
+      alert('Download failed: ' + err.message);
+    } finally {
+      setDownloading(false);
+    }
+  }}
+  disabled={downloading || noData}
+  className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 rounded-xl transition-all shadow-md shadow-blue-500/20 hover:-translate-y-0.5 disabled:opacity-50"
+>
+  {downloading
+    ? <><Loader size={15} className="animate-spin" /> Generating…</>
+    : <><Download size={15} /> Download CAM (.docx)</>
+  }
+</button>
         </div>
       </div>
 

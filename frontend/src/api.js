@@ -86,3 +86,38 @@ export async function queryDocuments(question) {
   }
   return res.json();
 }
+
+// Add this to your api.js file
+export const fetchWebResearch = async (companyName, sector) => {
+  const response = await fetch('http://localhost:8000/research', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ company_name: companyName, sector: sector }),
+  });
+  if (!response.ok) throw new Error('Web research failed');
+  return await response.json();
+};
+
+export async function downloadCAM(companyName, sector, requestedLoanCr) {
+  const res = await fetch(`${BASE_URL}/cam/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      company_name: companyName,
+      sector: sector,
+      requested_loan_cr: requestedLoanCr,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'CAM generation failed');
+  }
+  // Trigger browser download
+  const blob = await res.blob();
+  const url  = window.URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `CAM_${companyName.replace(/\s+/g, '_')}.docx`;
+  a.click();
+  window.URL.revokeObjectURL(url);
+}

@@ -2,7 +2,8 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from routers import documents, query, assess, charts
+from routers import documents, query, assess, charts, research, cam
+import uvicorn
 
 load_dotenv()
 
@@ -24,9 +25,14 @@ app.include_router(documents.router)
 app.include_router(query.router)
 app.include_router(assess.router)
 app.include_router(charts.router)
+app.include_router(research.router)
+app.include_router(cam.router)
 
 
 @app.get("/health", tags=["Health"])
 def health_check():
     """Liveness probe endpoint."""
     return {"status": "ok"}
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
