@@ -9,6 +9,7 @@ class AssessRequest(BaseModel):
     company_name: str
     sector: str
     requested_loan_cr: float = 5.0
+    qualitative_notes: str = ""
 
 
 @router.post("")
@@ -21,7 +22,7 @@ def assess_credit(req: AssessRequest):
     recommendation, score breakdown, conditions, and risk alerts.
     """
     try:
-        return run_credit_assessment(req.company_name, req.sector, req.requested_loan_cr)
+        return run_credit_assessment(req.company_name, req.sector, req.requested_loan_cr, req.qualitative_notes)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except RuntimeError as exc:

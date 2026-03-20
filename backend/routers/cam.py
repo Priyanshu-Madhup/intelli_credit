@@ -11,6 +11,7 @@ class CAMRequest(BaseModel):
     company_name: str
     sector: str
     requested_loan_cr: float = 5.0
+    qualitative_notes: str = "" 
 
 
 @router.post("/generate")
@@ -32,6 +33,7 @@ def generate_cam(req: CAMRequest):
             req.company_name,
             req.sector,
             req.requested_loan_cr,
+            req.qualitative_notes,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

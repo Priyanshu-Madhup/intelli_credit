@@ -32,7 +32,7 @@ export async function uploadDocuments(filesMap) {
  * @param {number} requestedLoanCr
  * @returns {Promise<Object>} - credit assessment object
  */
-export async function runAssessment(companyName, sector, requestedLoanCr) {
+export async function runAssessment(companyName, sector, requestedLoanCr, qualitativeNotes = "") {
   const res = await fetch(`${BASE_URL}/assess`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -40,6 +40,7 @@ export async function runAssessment(companyName, sector, requestedLoanCr) {
       company_name: companyName,
       sector,
       requested_loan_cr: requestedLoanCr,
+      qualitative_notes: qualitativeNotes,
     }),
   });
   if (!res.ok) {

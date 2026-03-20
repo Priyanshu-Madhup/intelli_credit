@@ -79,6 +79,7 @@ export default function NewCreditAssessment({ onNavigate }) {
   const [running, setRunning] = useState(false);
   const [errors, setErrors] = useState({});
   const [runStep, setRunStep] = useState('');
+  const [notes, setNotes] = useState('');
 
   const handleChange = (field, value) => setForm(f => ({ ...f, [field]: value }));
 
@@ -121,7 +122,7 @@ export default function NewCreditAssessment({ onNavigate }) {
       // Step 2: run credit assessment
       setRunStep('Running AI credit assessment…');
       const loanCr = parseFloat(form.loan) || 5.0;
-      const assessment = await runAssessment(companyName, form.sector, loanCr);
+      const assessment = await runAssessment(companyName, form.sector, loanCr, notes);
       // Persist for downstream pages
       localStorage.setItem('ic_assessment', JSON.stringify(assessment));
       localStorage.setItem('ic_company', JSON.stringify({ name: companyName, sector: form.sector, location: form.location }));
@@ -296,6 +297,36 @@ export default function NewCreditAssessment({ onNavigate }) {
           </div>
         )}
       </div>
+      {/* Qualitative Notes Card */}
+<div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+  <div className="px-6 py-4 border-b border-slate-50 flex items-center gap-3">
+    <div className="w-9 h-9 rounded-xl bg-violet-50 flex items-center justify-center">
+      <Brain size={18} className="text-violet-600" />
+    </div>
+    <div>
+      <h3 className="text-slate-900 font-semibold text-sm">Primary Due Diligence Notes</h3>
+      <p className="text-slate-400 text-xs">Optional — site visit observations, management interview notes</p>
+    </div>
+    <span className="ml-auto text-[10px] font-semibold px-2 py-1 rounded-full bg-violet-50 text-violet-600">
+      Adjusts AI Score
+    </span>
+  </div>
+  <div className="p-6 space-y-3">
+    <textarea
+      value={notes}
+      onChange={e => setNotes(e.target.value)}
+      placeholder={`Enter field observations that should influence the credit score. Examples:\n• Factory found operating at 40% capacity\n• Promoter has 20+ years in sector, clean track record\n• Management was evasive about Q3 revenue numbers\n• Collateral property verified at ₹8 Cr market value`}
+      rows={5}
+      className="w-full px-4 py-3 text-sm border border-slate-200 bg-slate-50 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400 transition-all resize-none placeholder:text-slate-300 leading-relaxed"
+    />
+    {notes.trim() && (
+      <div className="flex items-center gap-2 text-xs text-violet-700 bg-violet-50 border border-violet-100 rounded-xl px-3 py-2">
+        <CheckCircle size={13} className="flex-shrink-0" />
+        Officer notes will be factored into the AI risk assessment
+      </div>
+    )}
+  </div>
+</div>
 
       {/* Run button */}
       <div className="flex items-center justify-between">

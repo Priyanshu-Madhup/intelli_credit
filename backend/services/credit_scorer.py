@@ -80,7 +80,7 @@ Required structure:
 """
 
 
-def run_credit_assessment(company_name: str, sector: str, requested_loan_cr: float) -> Dict:
+def run_credit_assessment(company_name: str, sector: str, requested_loan_cr: float, qualitative_notes: str = "") -> Dict:
     """
     Generate a full AI credit assessment by retrieving context from FAISS
     and asking Groq to produce a structured JSON decision.
@@ -144,7 +144,15 @@ def run_credit_assessment(company_name: str, sector: str, requested_loan_cr: flo
         f"3. Do NOT fabricate numbers or assume data not present in the documents.\n"
         f"4. If a metric cannot be found in the documents, use null for numbers and 'N/A' for strings. NEVER use '—' or any dash as a JSON value.\n"
         f"5. The company name in your response should match what appears in the documents.\n\n"
-        f"Document excerpts from uploaded financial documents:\n{context}\n\n"
+        + (
+    f"PRIMARY DUE DILIGENCE NOTES (from credit officer site visit / management interview):\n"
+    f"{qualitative_notes}\n\n"
+    f"IMPORTANT: These officer notes are first-hand observations. You MUST factor them into your "
+    f"risk score and reasoning. If notes mention capacity issues, evasive management, or operational "
+    f"problems — reduce relevant scores significantly. If notes are positive — reflect that too.\n\n"
+    if qualitative_notes.strip() else ""
+)
+       + f"Document excerpts from uploaded financial documents:\n{context}\n\n"
         f"Produce a complete credit assessment as structured JSON:\n"
         f"{_SCHEMA_DESCRIPTION}"
     )
