@@ -7,6 +7,7 @@ import AIAnalysis from './pages/AIAnalysis';
 import ResearchInsights from './pages/ResearchInsights';
 import CreditRecommendation from './pages/CreditRecommendation';
 import CAMReport from './pages/CAMReport';
+import GSTValidation from './pages/GSTValidation';
 
 export default function App() {
   const [page, setPage] = useState('dashboard');
@@ -19,6 +20,7 @@ export default function App() {
       case 'research':       return <ResearchInsights />;
       case 'recommendation': return <CreditRecommendation onNavigate={setPage} />;
       case 'report':         return <CAMReport />;
+      case 'gst': return <GSTValidation />;
       default:               return <Dashboard onNavigate={setPage} />;
     }
   };

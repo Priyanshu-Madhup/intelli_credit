@@ -11,6 +11,7 @@ const navItems = [
   { id: 'research',        label: 'Research Insights',   icon: Globe },
   { id: 'recommendation',  label: 'Credit Decision',     icon: Award },
   { id: 'report',          label: 'CAM Report',          icon: FileText },
+  { id: 'gst', label: 'GST Validator', icon: FileText },
 ];
 
 export default function Sidebar({ currentPage, onNavigate }) {

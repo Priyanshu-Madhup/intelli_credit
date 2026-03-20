@@ -2,7 +2,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from routers import documents, query, assess, charts, research, cam
+from routers import documents, query, assess, charts, research, cam, validate
 import uvicorn
 
 load_dotenv()
@@ -27,6 +27,7 @@ app.include_router(assess.router)
 app.include_router(charts.router)
 app.include_router(research.router)
 app.include_router(cam.router)
+app.include_router(validate.router)
 
 
 @app.get("/health", tags=["Health"])
