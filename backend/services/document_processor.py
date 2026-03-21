@@ -6,8 +6,7 @@ import pymupdf as fitz  # PyMuPDF >= 1.24
 import faiss
 import tiktoken
 from groq import Groq
-from sentence_transformers import SentenceTransformer
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -23,19 +22,20 @@ GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 GROQ_INPUT_TOKEN_LIMIT: int = 6000   # safe window size per LLM call
 GROQ_RESPONSE_TOKEN_BUDGET: int = 2048  # max tokens allocated for LLM JSON output
 
-_embedding_model: Optional[SentenceTransformer] = None
+_embedding_model: Optional[Any] = None
 
 # ---------------------------------------------------------------------------
 # In-memory FAISS cache (avoids disk I/O on every query)
 # ---------------------------------------------------------------------------
-_cached_index: Optional[faiss.Index] = None
+_cached_index: Optional[Any] = None
 _cached_metadata: Optional[List[Dict]] = None
 
 
-def _get_embedding_model() -> SentenceTransformer:
+def _get_embedding_model():
     """Lazy-load and cache the SentenceTransformer embedding model."""
     global _embedding_model
     if _embedding_model is None:
+        from sentence_transformers import SentenceTransformer  # deferred: avoids slow PyTorch import at startup
         _embedding_model = SentenceTransformer(EMBEDDING_MODEL)
     return _embedding_model
 
