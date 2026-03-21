@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
   Download, ChevronDown, ChevronUp, Building2,
-  Users, BarChart2, AlertTriangle, Award, Printer, Share2,
-  ClipboardList, Globe
+  BarChart2, AlertTriangle, Award, Printer, Share2,
+  ClipboardList
 } from 'lucide-react';
 
 const riskLevelStyle = {

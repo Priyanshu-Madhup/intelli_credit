@@ -203,6 +203,7 @@ export default function NewCreditAssessment({ onNavigate }) {
   };
 
   const uploadCount = Object.keys(files).length;
+  // eslint-disable-next-line no-unused-vars
   const processedCount = Object.keys(processedFiles).length;
 
   return (

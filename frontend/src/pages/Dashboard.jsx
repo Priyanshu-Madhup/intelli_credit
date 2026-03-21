@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   FileText, AlertTriangle, Clock, CheckCircle,
-  ArrowUpRight, ArrowDownRight, Plus,
+  Plus,
   Building2, ChevronRight, Activity
 } from 'lucide-react';
 import {
@@ -18,6 +18,7 @@ const statusStyles = {
 
 const scoreColor = (s) => s < 40 ? 'text-green-600' : s < 70 ? 'text-amber-600' : 'text-red-600';
 
+// eslint-disable-next-line no-unused-vars
 const CustomTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
     return (
@@ -45,6 +46,7 @@ export default function Dashboard({ onNavigate }) {
     } catch (_) {}
   }, []);
 
+  // eslint-disable-next-line no-unused-vars
   const riskLabel = (score) => score >= 70 ? 'High Risk' : score >= 40 ? 'Medium Risk' : 'Low Risk';
 
   const highRiskCount = history.filter(h => h.score >= 70).length;

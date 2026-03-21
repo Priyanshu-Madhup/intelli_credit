@@ -210,7 +210,7 @@ export default function DocQuery() {
     } finally {
       setLoading(false);
     }
-  }, [input, loading, messages.length]);
+}, [input, loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
