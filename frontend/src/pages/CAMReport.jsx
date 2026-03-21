@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
   Download, ChevronDown, ChevronUp, Building2,
-  Users, BarChart2, AlertTriangle, Award, Printer, Share2
+  Users, BarChart2, AlertTriangle, Award, Printer, Share2,
+  ClipboardList, Globe
 } from 'lucide-react';
 
 const riskLevelStyle = {
@@ -27,16 +28,19 @@ function fmtCr(val, fallback = '—') {
 }
 
 export default function CAMReport() {
-  const [open, setOpen] = useState({ company: true, financial: false, risk: false, recommendation: false });
+  const [open, setOpen] = useState({ company: true, financial: false, risk: false, primary: false, recommendation: false });
   const [a, setA] = useState(null);   // assessment
   const [co, setCo] = useState(null); // company meta
+  const [primaryNotes, setPrimaryNotes] = useState([]);
 
   useEffect(() => {
     try {
       const raw = localStorage.getItem('ic_assessment');
       const c   = localStorage.getItem('ic_company');
+      const pn  = localStorage.getItem('ic_primary_notes');
       if (raw) setA(JSON.parse(raw));
       if (c)   setCo(JSON.parse(c));
+      if (pn)  setPrimaryNotes(JSON.parse(pn));
     } catch (_) {}
   }, []);
 
@@ -47,8 +51,13 @@ export default function CAMReport() {
   const location     = co?.location  ?? '—';
   const decision     = a?.decision   ?? '—';
   const riskScore    = a?.risk_score ?? '—';
-  const recLoan      = fmtCr(a?.recommended_loan_cr);
-  const reqLoan      = fmtCr(a?.requested_loan_cr);
+  const rawRecLoan   = a?.recommended_loan_cr;
+  const rawReqLoan   = a?.requested_loan_cr;
+  const safeRecLoan  = rawRecLoan != null && rawReqLoan != null && rawRecLoan > rawReqLoan * 5
+    ? Math.round(rawReqLoan * 0.8 * 100) / 100
+    : rawRecLoan;
+  const recLoan      = fmtCr(safeRecLoan);
+  const reqLoan      = fmtCr(rawReqLoan);
   const interest     = a?.interest_rate_pct != null ? `${a.interest_rate_pct}% per annum` : '—';
   const tenor        = a?.tenor_months != null ? `${a.tenor_months} months` : '—';
   const conditions   = a?.conditions  ?? [];
@@ -222,6 +231,26 @@ export default function CAMReport() {
               <p className="text-slate-400 text-sm">No risk alerts in the assessment.</p>
             )}
           </AccordionSection>
+
+          {/* 3b. Primary Due Diligence Notes */}
+          {primaryNotes.length > 0 && (
+            <AccordionSection id="primary" open={open} toggle={toggle} icon={ClipboardList} color="bg-emerald-500" title="3b. Primary Due Diligence Notes">
+              <div className="space-y-3">
+                <p className="text-xs text-slate-400 mb-2">Qualitative observations from site visits, management interviews, and field due diligence.</p>
+                {primaryNotes.map((note, i) => {
+                  const typeLabels = { site_visit: 'Site Visit', management_interview: 'Management Interview', market_feedback: 'Market Feedback', operational: 'Operational', other: 'Other' };
+                  return (
+                    <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-slate-50">
+                      <span className="flex-shrink-0 mt-0.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                        {typeLabels[note.type] || note.type}
+                      </span>
+                      <p className="text-slate-700 text-sm leading-relaxed">{note.text}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </AccordionSection>
+          )}
 
           {/* 4. Final Recommendation */}
           <AccordionSection id="recommendation" open={open} toggle={toggle} icon={Award} color="bg-blue-600" title="4. Final Recommendation">

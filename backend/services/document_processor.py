@@ -19,7 +19,17 @@ TOKEN_THRESHOLD: int = int(os.getenv("TOKEN_THRESHOLD", "2000"))
 EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
+# Groq context limits for llama-3.3-70b-versatile (128k context, 8k output)
+GROQ_INPUT_TOKEN_LIMIT: int = 6000   # safe window size per LLM call
+GROQ_RESPONSE_TOKEN_BUDGET: int = 2048  # max tokens allocated for LLM JSON output
+
 _embedding_model: Optional[SentenceTransformer] = None
+
+# ---------------------------------------------------------------------------
+# In-memory FAISS cache (avoids disk I/O on every query)
+# ---------------------------------------------------------------------------
+_cached_index: Optional[faiss.Index] = None
+_cached_metadata: Optional[List[Dict]] = None
 
 
 def _get_embedding_model() -> SentenceTransformer:
@@ -129,6 +139,29 @@ def extract_company_name(text: str) -> str:
         return ""
 
 
+def _extract_company_name_local(text: str) -> str:
+    """
+    Fast regex-based company name detection — NO LLM call.
+    Used during upload to avoid slow Groq roundtrips.
+    """
+    # Try common patterns on the first 3000 chars
+    sample = text[:3000]
+
+    # Pattern: "XYZ Limited", "XYZ Ltd", "XYZ Pvt Ltd", "XYZ Private Limited", "XYZ LLP"
+    patterns = [
+        r'([A-Z][A-Za-z0-9 &\-]+(?:Private Limited|Pvt\.?\s*Ltd\.?|Limited|Ltd\.?|LLP|LLC|Inc\.?|Corp\.?))',
+        r'(?:Company|Entity|Borrower|Client|Applicant)\s*[:\-]\s*([A-Z][A-Za-z0-9 &\-]+)',
+        r'^([A-Z][A-Z A-Za-z0-9&\-]{5,50})\n',  # First bold-looking line
+    ]
+    for pat in patterns:
+        m = re.search(pat, sample)
+        if m:
+            name = m.group(1).strip().strip('.')
+            if 5 < len(name) < 80:
+                return name
+    return ""
+
+
 def _extract_pages_text(file_path: str) -> List[Dict]:
     """
     Internal helper: extract text per page with page-number metadata.
@@ -150,13 +183,176 @@ def _extract_pages_text(file_path: str) -> List[Dict]:
 
 
 # ---------------------------------------------------------------------------
-# 3. DYNAMIC CHUNKING VIA GROQ
+# 3. CHUNKING  —  one tiny planning call + pure-Python token splitter
 # ---------------------------------------------------------------------------
+#
+# Design:
+#   Step A) Count tokens (tiktoken, zero API calls).
+#   Step B) ONE tiny LLM call (≤ 40 output tokens) asking for chunk_size
+#           and overlap.  Falls back to a heuristic if the API is unavailable.
+#   Step C) chunk_by_tokens() splits the token stream deterministically —
+#           NO further LLM calls, no re-writing of content.
+# ---------------------------------------------------------------------------
+
+
+def _heuristic_chunking_plan(token_count: int) -> Dict:
+    """Deterministic fallback: derive chunk_size/overlap from token_count."""
+    if token_count < 1_000:
+        return {"chunk_size": 200, "overlap": 30}
+    elif token_count < 5_000:
+        return {"chunk_size": 350, "overlap": 50}
+    elif token_count < 20_000:
+        return {"chunk_size": 450, "overlap": 65}
+    elif token_count < 60_000:
+        return {"chunk_size": 500, "overlap": 75}
+    else:
+        return {"chunk_size": 600, "overlap": 90}
+
+
+def _plan_chunking(token_count: int) -> Dict:
+    """
+    Decide chunk_size and overlap with ONE tiny LLM call (≤ 40 output tokens).
+
+    Prompt is ~30 input tokens.  Response is a JSON object like
+    {"chunk_size": 450, "overlap": 65} — usually ~15 tokens.
+    Falls back to _heuristic_chunking_plan if unavailable.
+    """
+    if not GROQ_API_KEY:
+        return _heuristic_chunking_plan(token_count)
+
+    try:
+        client = Groq(api_key=GROQ_API_KEY)
+        response = client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Financial PDF: {token_count} tokens. "
+                    "Target 20-60 RAG chunks, overlap ~15% of chunk_size. "
+                    "Reply with ONLY valid JSON, no explanation: "
+                    '{"chunk_size": <int 200-600>, "overlap": <int 20-100>}'
+                ),
+            }],
+            temperature=0.0,
+            max_tokens=40,   # The entire response is a tiny JSON object
+        )
+        raw = response.choices[0].message.content.strip()
+        raw = re.sub(r"```[a-zA-Z]*\n?", "", raw).strip("`\n ")
+        plan = json.loads(raw)
+        chunk_size = max(200, min(600, int(plan.get("chunk_size", 400))))
+        overlap    = max(20,  min(100, int(plan.get("overlap",     60))))
+        return {"chunk_size": chunk_size, "overlap": overlap}
+    except Exception:
+        return _heuristic_chunking_plan(token_count)
+
+
+def chunk_by_tokens(text: str, chunk_size: int, overlap: int) -> List[Dict]:
+    """
+    Token-aware chunking — split the raw token stream with tiktoken.
+    Produces chunks of exactly chunk_size tokens (last chunk may be shorter)
+    with `overlap` tokens carried over between consecutive chunks.
+
+    No LLM calls.  Preserves every number, percentage, and financial figure
+    exactly as-is because we are splitting at token boundaries, not sentences.
+    """
+    enc = tiktoken.get_encoding("cl100k_base")
+    all_tokens = enc.encode(text)
+    total = len(all_tokens)
+    if total == 0:
+        return []
+
+    step   = max(chunk_size - overlap, 1)
+    chunks = []
+    start  = 0
+    idx    = 1
+
+    while start < total:
+        end         = min(start + chunk_size, total)
+        chunk_text  = enc.decode(all_tokens[start:end])
+        if chunk_text.strip():
+            # Derive a readable section name from the first few words
+            preview = " ".join(chunk_text.split()[:8])[:60]
+            section = f"Segment {idx}: {preview}" if preview else f"Segment {idx}"
+            chunks.append({"section": section, "content": chunk_text})
+            idx += 1
+        if end >= total:
+            break
+        start += step
+
+    return chunks
+
+
+# kept as emergency fallback (called only if chunk_by_tokens returns [])
+def _compute_chunking_plan(token_count: int) -> Dict:
+    """
+    Given total document token count, compute an optimal chunking plan.
+
+    Returns dict with:
+        - target_chunks: ideal number of chunks
+        - tokens_per_chunk: target tokens per chunk (for simple fallback)
+        - sections_per_window: how many sections the LLM should produce per call
+        - window_token_size: how many tokens of text to send per LLM call
+        - max_windows: max number of LLM calls to make
+    """
+    if token_count <= 500:
+        # Very small doc: 2-4 chunks of ~100-150 tokens
+        return {
+            "target_chunks": max(2, token_count // 150),
+            "tokens_per_chunk": 150,
+            "sections_per_window": max(2, token_count // 150),
+            "window_token_size": token_count,
+            "max_windows": 1,
+        }
+    elif token_count <= 2000:
+        # Small doc: 5-10 chunks of ~200 tokens
+        target = max(5, token_count // 200)
+        return {
+            "target_chunks": target,
+            "tokens_per_chunk": 200,
+            "sections_per_window": min(target, 6),
+            "window_token_size": min(token_count, GROQ_INPUT_TOKEN_LIMIT),
+            "max_windows": 1,
+        }
+    elif token_count <= 8000:
+        # Medium doc: 10-25 chunks of ~250-350 tokens
+        target = max(10, token_count // 300)
+        windows_needed = max(1, (token_count + GROQ_INPUT_TOKEN_LIMIT - 1) // GROQ_INPUT_TOKEN_LIMIT)
+        sections_per = max(3, target // windows_needed)
+        return {
+            "target_chunks": target,
+            "tokens_per_chunk": 300,
+            "sections_per_window": min(sections_per, 8),
+            "window_token_size": GROQ_INPUT_TOKEN_LIMIT,
+            "max_windows": min(windows_needed, 3),
+        }
+    elif token_count <= 30000:
+        # Large doc: 20-50 chunks of ~400-600 tokens
+        target = max(20, token_count // 500)
+        windows_needed = max(2, (token_count + GROQ_INPUT_TOKEN_LIMIT - 1) // GROQ_INPUT_TOKEN_LIMIT)
+        sections_per = max(3, target // windows_needed)
+        return {
+            "target_chunks": target,
+            "tokens_per_chunk": 500,
+            "sections_per_window": min(sections_per, 8),
+            "window_token_size": GROQ_INPUT_TOKEN_LIMIT,
+            "max_windows": min(windows_needed, 6),
+        }
+    else:
+        # Very large doc: LLM processes key portions, rest is simple-chunked
+        target = max(40, token_count // 600)
+        return {
+            "target_chunks": target,
+            "tokens_per_chunk": 600,
+            "sections_per_window": 6,
+            "window_token_size": GROQ_INPUT_TOKEN_LIMIT,
+            "max_windows": 8,
+        }
+
 
 def dynamic_chunking(text: str) -> List[Dict]:
     """
-    Use Groq (LLaMA 3) to split a financial document into semantically
-    meaningful sections.
+    Token-aware dynamic chunking: measures document tokens, computes an
+    optimal plan, then uses Groq to semantically split each window.
 
     Falls back to simple word-count chunking if the LLM response cannot
     be parsed as valid JSON.
@@ -170,83 +366,131 @@ def dynamic_chunking(text: str) -> List[Dict]:
     if not GROQ_API_KEY:
         return _simple_chunk(text)
 
+    enc = tiktoken.get_encoding("cl100k_base")
+    token_count = len(enc.encode(text))
+    plan = _compute_chunking_plan(token_count)
+
     client = Groq(api_key=GROQ_API_KEY)
 
-    # Limit input to ~8000 chars to keep the response well within token budget
-    # and reduce the chance of JSON truncation or malformed escape sequences.
-    sample = text[:8000]
+    # Build token-aligned windows using the tokenizer for precision
+    all_tokens = enc.encode(text)
+    win_size = plan["window_token_size"]
+    # Overlap 10% of window to avoid cutting mid-sentence
+    overlap = max(100, win_size // 10)
+    max_win = plan["max_windows"]
 
-    prompt = (
-        "You are a financial document analyst. Split the following document excerpt "
-        "into 5-10 meaningful semantic sections.\n\n"
-        "STRICT OUTPUT RULES:\n"
-        "- Return ONLY a valid JSON array. No markdown, no code fences, no explanation.\n"
-        "- Each item: {\"section\": \"<title>\", \"content\": \"<text>\"}\n"
-        "- PRESERVE ALL NUMBERS, AMOUNTS, PERCENTAGES, AND FINANCIAL FIGURES in the content — do NOT summarize away numerical data.\n"
-        "- Content values should be 2-5 sentences each, keeping all key facts and figures.\n"
-        "- Escape all special characters inside strings properly.\n"
-        "- Do NOT use smart quotes or typographic apostrophes in the JSON.\n\n"
-        "Example:\n"
-        "[\n"
-        "  {\"section\": \"Financial Performance\", \"content\": \"Revenue grew 15% YoY to INR 48 Cr. Net profit margin stood at 12.3%. Total debt was INR 22 Cr with D/E ratio of 1.8.\"},\n"
-        "  {\"section\": \"Risk Factors\", \"content\": \"High debt-to-equity ratio of 2.1 noted. Interest coverage ratio is 2.3x.\"}\n"
-        "]\n\n"
-        f"Document excerpt:\n{sample}"
-    )
+    windows = []
+    start = 0
+    while start < len(all_tokens) and len(windows) < max_win:
+        end = min(start + win_size, len(all_tokens))
+        window_text = enc.decode(all_tokens[start:end])
+        windows.append(window_text)
+        if end >= len(all_tokens):
+            break
+        start += win_size - overlap
 
-    try:
-        response = client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            max_tokens=1500,
+    all_chunks = []
+    sects_per_win = plan["sections_per_window"]
+    tpc = plan["tokens_per_chunk"]
+
+    # Scale max_tokens for response based on sections requested
+    # ~80 tokens overhead per section (JSON keys, quotes, etc.) + content
+    response_budget = min(GROQ_RESPONSE_TOKEN_BUDGET, sects_per_win * (tpc + 80))
+
+    for i, window in enumerate(windows):
+        prompt = (
+            "You are a financial document analyst. Split the following document excerpt "
+            f"into {sects_per_win}-{sects_per_win + 2} meaningful semantic sections.\n\n"
+            "CHUNKING GUIDELINES:\n"
+            f"- Target approximately {tpc} tokens (~{tpc * 3 // 4} words) per section content.\n"
+            "- Keep financial figures, numbers, percentages, and dates EXACTLY as they appear.\n"
+            "- Each section should be self-contained and cover one topic/aspect.\n\n"
+            "STRICT OUTPUT RULES:\n"
+            "- Return ONLY a valid JSON array. No markdown, no code fences, no explanation.\n"
+            "- Each item: {\"section\": \"<title>\", \"content\": \"<text>\"}\n"
+            "- PRESERVE ALL NUMBERS, AMOUNTS, PERCENTAGES, AND FINANCIAL FIGURES.\n"
+            "- Do NOT use smart quotes or typographic apostrophes in the JSON.\n\n"
+            f"Document excerpt (part {i+1} of {len(windows)}, "
+            f"total document ~{token_count} tokens):\n{window}"
         )
 
-        raw: str = response.choices[0].message.content.strip()
+        try:
+            response = client.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=response_budget,
+            )
 
-        # Strip markdown code fences
-        if raw.startswith("```"):
-            raw = re.sub(r"^```[a-zA-Z]*\n?", "", raw)
-            raw = re.sub(r"\n?```$", "", raw.strip())
+            raw: str = response.choices[0].message.content.strip()
 
-        # Replace typographic apostrophes / smart quotes with plain ASCII so
-        # json.loads doesn't choke on them inside string values
-        raw = raw.replace("\u2019", "'").replace("\u2018", "'")
-        raw = raw.replace("\u201c", '"').replace("\u201d", '"')
-        raw = raw.replace("\u02bc", "'")  # modifier letter apostrophe
+            if raw.startswith("```"):
+                raw = re.sub(r"^```[a-zA-Z]*\n?", "", raw)
+                raw = re.sub(r"\n?```$", "", raw.strip())
 
-        chunks = json.loads(raw)
-        if not isinstance(chunks, list):
-            raise ValueError("Expected a JSON array at the top level.")
-        valid = [c for c in chunks if isinstance(c, dict) and "section" in c and "content" in c]
-        if valid:
-            return valid
-        raise ValueError("No valid chunks found in response.")
+            raw = raw.replace("\u2019", "'").replace("\u2018", "'")
+            raw = raw.replace("\u201c", '"').replace("\u201d", '"')
+            raw = raw.replace("\u02bc", "'")
 
-    except Exception:
-        # Any failure (network, parse error, etc.) → fall back to simple chunking
-        return _simple_chunk(text)
+            chunks = json.loads(raw)
+            if isinstance(chunks, list):
+                valid = [c for c in chunks if isinstance(c, dict) and "section" in c and "content" in c]
+                all_chunks.extend(valid)
+        except Exception:
+            # If this window fails, simple-chunk it with plan's token target
+            fallback_word_size = max(80, tpc * 3 // 4)  # ~0.75 words per token
+            words = window.split()
+            for j in range(0, len(words), fallback_word_size):
+                segment = " ".join(words[j:j + fallback_word_size])
+                if segment.strip():
+                    all_chunks.append({
+                        "section": f"Segment {len(all_chunks) + 1}",
+                        "content": segment,
+                    })
+
+    # Simple-chunk any remaining text beyond the LLM-processed windows
+    if windows and len(all_tokens) > 0:
+        llm_covered_tokens = min(
+            (len(windows) - 1) * (win_size - overlap) + win_size,
+            len(all_tokens)
+        )
+        if llm_covered_tokens < len(all_tokens):
+            remaining_text = enc.decode(all_tokens[llm_covered_tokens:])
+            fallback_word_size = max(80, tpc * 3 // 4)
+            remaining_chunks = _simple_chunk(remaining_text, chunk_size=fallback_word_size)
+            for rc in remaining_chunks:
+                rc["section"] = f"Segment {len(all_chunks) + 1}"
+                all_chunks.append(rc)
+
+    return all_chunks if all_chunks else _simple_chunk(text)
 
 
-def _simple_chunk(text: str, chunk_size: int = 500) -> List[Dict]:
+def _simple_chunk(text: str, chunk_size: int = 200, overlap: int = 50) -> List[Dict]:
     """
-    Fallback chunker: split text into fixed-size word-count segments.
+    Fallback chunker: split text into fixed-size word-count segments with overlap.
 
     Args:
         text: Input text to chunk.
         chunk_size: Target number of words per chunk.
+        overlap: Number of overlapping words between consecutive chunks.
 
     Returns:
         List of dicts with keys 'section' and 'content'.
     """
     words = text.split()
     chunks = []
-    for i in range(0, len(words), chunk_size):
-        segment = " ".join(words[i : i + chunk_size])
-        chunks.append({
-            "section": f"Segment {i // chunk_size + 1}",
-            "content": segment,
-        })
+    start = 0
+    idx = 1
+    step = max(chunk_size - overlap, 1)
+    while start < len(words):
+        segment = " ".join(words[start:start + chunk_size])
+        if segment.strip():
+            chunks.append({
+                "section": f"Segment {idx}",
+                "content": segment,
+            })
+            idx += 1
+        start += step
     return chunks
 
 
@@ -312,17 +556,15 @@ def save_index(
     metadata_path: str = FAISS_METADATA_PATH,
 ) -> None:
     """
-    Persist a FAISS index and its associated metadata to disk.
-
-    Args:
-        index: Trained FAISS index to save.
-        metadata: List of metadata dicts (section, content, source, page).
-        index_path: File path for the FAISS binary index file.
-        metadata_path: File path for the JSON metadata file.
+    Persist a FAISS index and its associated metadata to disk
+    and update the in-memory cache immediately.
     """
+    global _cached_index, _cached_metadata
     faiss.write_index(index, index_path)
     with open(metadata_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
+    _cached_index = index
+    _cached_metadata = list(metadata)
 
 
 def load_index(
@@ -330,18 +572,13 @@ def load_index(
     metadata_path: str = FAISS_METADATA_PATH,
 ) -> Tuple[faiss.Index, List[Dict]]:
     """
-    Load a previously saved FAISS index and its metadata from disk.
-
-    Args:
-        index_path: File path of the saved FAISS index binary.
-        metadata_path: File path of the saved metadata JSON.
-
-    Returns:
-        Tuple of (faiss_index, metadata_list).
-
-    Raises:
-        FileNotFoundError: If either the index or metadata file is missing.
+    Return the in-memory cached index if available, otherwise load from disk
+    and populate the cache.
     """
+    global _cached_index, _cached_metadata
+    if _cached_index is not None and _cached_metadata is not None:
+        return _cached_index, _cached_metadata
+
     if not os.path.exists(index_path):
         raise FileNotFoundError(f"FAISS index not found: {index_path}")
     if not os.path.exists(metadata_path):
@@ -350,7 +587,44 @@ def load_index(
     index = faiss.read_index(index_path)
     with open(metadata_path, "r", encoding="utf-8") as f:
         metadata = json.load(f)
-    return index, metadata
+
+    _cached_index = index
+    _cached_metadata = list(metadata)
+    return _cached_index, _cached_metadata
+
+
+def get_document_store() -> List[Dict]:
+    """Return a flat list of all indexed chunks from the in-memory cache."""
+    global _cached_metadata
+    if _cached_metadata is not None:
+        return list(_cached_metadata)
+    # Fall back to loading from disk if cache is cold
+    try:
+        _, metadata = load_index()
+        return list(metadata)
+    except FileNotFoundError:
+        return []
+
+
+def estimate_tokens(text: str) -> int:
+    """Estimate token count for a string (cl100k_base approximation)."""
+    return count_tokens(text)
+
+
+def truncate_chunks_by_tokens(chunks: List[Dict], max_tokens: int = 4000) -> List[Dict]:
+    """
+    Return as many chunks as fit within max_tokens (measured by content length).
+    Chunks are kept in their original order (highest-relevance first).
+    """
+    result: List[Dict] = []
+    total = 0
+    for chunk in chunks:
+        t = estimate_tokens(chunk.get("content", ""))
+        if total + t > max_tokens:
+            break
+        result.append(chunk)
+        total += t
+    return result or chunks[:1]  # always return at least one chunk
 
 
 # ---------------------------------------------------------------------------
@@ -390,19 +664,20 @@ def process_document(file_path: str) -> Dict:
         with open(raw_text_path, 'w', encoding='utf-8') as _f:
             _f.write(full_text)
 
-        # Step 1c: Detect company name from document text
-        detected_company = extract_company_name(full_text)
+        # Step 1c: Detect company name locally (no LLM — fast path for upload)
+        detected_company = _extract_company_name_local(full_text)
 
-        # Step 2: Token count
+        # Step 2: Count tokens — no API call
         token_count = count_tokens(full_text)
 
-        # Step 3: Chunking strategy
-        if token_count > TOKEN_THRESHOLD:
-            chunks = dynamic_chunking(full_text)
-            strategy = "dynamic"
-        else:
+        # Step 3: ONE tiny LLM call (≤ 40 output tokens) to decide chunk_size
+        plan = _plan_chunking(token_count)
+
+        # Step 4: Token-aware chunking — pure Python, zero LLM calls
+        chunks = chunk_by_tokens(full_text, plan["chunk_size"], plan["overlap"])
+        if not chunks:                          # emergency fallback
             chunks = _simple_chunk(full_text)
-            strategy = "simple"
+        strategy = "token_aware"
 
         # Step 4: Attach metadata
         source_name = os.path.basename(file_path)
@@ -421,8 +696,13 @@ def process_document(file_path: str) -> Dict:
             "num_chunks": len(chunks),
             "token_count": token_count,
             "chunking_strategy": strategy,
+            "chunk_size": plan.get("chunk_size"),
+            "overlap": plan.get("overlap"),
             "status": "success",
-            "message": f"Processed '{source_name}' into {len(chunks)} chunks.",
+            "message": (
+                f"Processed '{source_name}' into {len(chunks)} chunks "
+                f"({plan.get('chunk_size')} tok/chunk, {plan.get('overlap')} overlap)."
+            ),
             "company_name": detected_company,
         }
 

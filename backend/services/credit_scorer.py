@@ -6,29 +6,22 @@ risk score, decision, loan recommendation, score breakdown, conditions,
 AI reasoning, and risk alerts.
 """
 import json
-import os
 import re
 from typing import Dict
 from groq import Groq
 from dotenv import load_dotenv
 
 from services.rag_service import retrieve_chunks
-from services.document_processor import GROQ_API_KEY, GROQ_MODEL, FAISS_INDEX_PATH
+from services.document_processor import GROQ_API_KEY, GROQ_MODEL, truncate_chunks_by_tokens
 
 load_dotenv()
 
-RAW_TEXT_PATH = os.path.join(os.path.dirname(FAISS_INDEX_PATH) or '.', 'raw_document_text.txt')
-
-# Queries that drive context retrieval for a full credit assessment
+# One targeted query per dimension, top_k=2 each → max 8 unique chunks total
 _ASSESSMENT_QUERIES = [
-    "annual revenue net profit margin financial performance",
-    "total debt equity ratio liabilities balance sheet",
-    "GST turnover discrepancy mismatch tax compliance",
-    "litigation legal disputes court notices",
-    "loan repayment history NPA defaults",
-    "collateral assets security",
-    "management quality promoter background",
-    "market position sector industry outlook",
+    "revenue INR crore PAT profit after tax FY YoY",
+    "debt borrowings liabilities INR crore equity ratio",
+    "NPA default litigation court GST compliance",
+    "collateral management promoter background directors",
 ]
 
 _SCHEMA_DESCRIPTION = """
@@ -39,12 +32,13 @@ CRITICAL JSON RULES:
 - If a numeric value is unknown, use 0 for scores, 10.0 for interest_rate_pct, 36 for tenor_months.
 - Every string field MUST contain a quoted string. Use "N/A" if data is unavailable — do NOT use bare dashes.
 - Do NOT include comments or extra keys.
+- CRITICAL: recommended_loan_cr MUST be in CRORE (Cr) units. Output a number like 5.0 or 25.0, NOT a raw rupee amount like 50000000.
 
 Required structure:
 {
   "risk_score": <integer 0-100>,
   "decision": <"approved" | "conditional" | "rejected">,
-  "recommended_loan_cr": <float>,
+  "recommended_loan_cr": <float in Crore, e.g. 5.0, 25.0, 100.0>,
   "requested_loan_cr": <float or null>,
   "interest_rate_pct": <float, use 10.0 if unknown>,
   "tenor_months": <integer, use 36 if unknown>,
@@ -99,14 +93,11 @@ def run_credit_assessment(company_name: str, sector: str, requested_loan_cr: flo
     if not GROQ_API_KEY:
         raise RuntimeError("GROQ_API_KEY is not set.")
 
-    # Collect context: company-specific query first, then generic risk dimensions
-    seen_sections = set()
-    context_parts = []
-    all_queries = [
-        f"{company_name} company organization borrower applicant financial documents",
-    ] + _ASSESSMENT_QUERIES
-    for q in all_queries:
-        for chunk in retrieve_chunks(q, top_k=3):
+    # 4 targeted queries × top_k=2 (exact, no boost) → max 8 unique chunks, all sent in 1 LLM call
+    seen_sections: set = set()
+    context_parts: list = []
+    for q in _ASSESSMENT_QUERIES:
+        for chunk in retrieve_chunks(q, top_k=2, exact=True):
             key = chunk.get("section", "") + chunk.get("content", "")[:80]
             if key not in seen_sections:
                 seen_sections.add(key)
@@ -120,19 +111,12 @@ def run_credit_assessment(company_name: str, sector: str, requested_loan_cr: flo
             "Please upload and process financial documents before running the credit assessment."
         )
 
-    # Also read the raw document text (actual PDF content with numbers)
-    raw_text = ""
-    if os.path.exists(RAW_TEXT_PATH):
-        with open(RAW_TEXT_PATH, 'r', encoding='utf-8') as _f:
-            raw_text = _f.read()
-
-    # Combine FAISS chunk summaries with raw text for richer context
-    chunk_context = "\n\n".join(context_parts[:12])
-    if raw_text.strip():
-        # Prefer raw text (has actual numbers), append chunk summaries
-        context = raw_text[:20000] + "\n\n--- Additional context ---\n\n" + chunk_context[:6000]
-    else:
-        context = "\n\n".join(context_parts[:24])
+    # Budget: 8 chunks × ~225 tokens avg = ~1800 tokens context + ~500 overhead + 3000 response
+    trimmed_parts = truncate_chunks_by_tokens(
+        [{"content": p, "section": ""} for p in context_parts],
+        max_tokens=1800,
+    )
+    context = "\n\n".join(c["content"] for c in trimmed_parts)
 
     client = Groq(api_key=GROQ_API_KEY)
     prompt = (
@@ -141,9 +125,10 @@ def run_credit_assessment(company_name: str, sector: str, requested_loan_cr: flo
         f"CRITICAL INSTRUCTIONS:\n"
         f"1. Base your assessment STRICTLY on the document excerpts provided below.\n"
         f"2. Extract real figures, dates, names and facts exactly as they appear in the documents.\n"
-        f"3. Do NOT fabricate numbers or assume data not present in the documents.\n"
-        f"4. If a metric cannot be found in the documents, use null for numbers and 'N/A' for strings. NEVER use '—' or any dash as a JSON value.\n"
-        f"5. The company name in your response should match what appears in the documents.\n\n"
+        f"3. PAT (Profit After Tax) = net_profit. Map PAT values to the net_profit field.\n"
+        f"4. Do NOT fabricate numbers or assume data not present in the documents.\n"
+        f"5. If a metric cannot be found in the documents, use null for numbers and 'N/A' for strings. NEVER use '\u2014' or any dash as a JSON value.\n"
+        f"6. The company name in your response should match what appears in the documents.\n\n"
         f"Document excerpts from uploaded financial documents:\n{context}\n\n"
         f"Produce a complete credit assessment as structured JSON:\n"
         f"{_SCHEMA_DESCRIPTION}"
@@ -191,6 +176,42 @@ def run_credit_assessment(company_name: str, sector: str, requested_loan_cr: flo
     for dim in sb.values():
         if isinstance(dim, dict) and dim.get("score") is None:
             dim["score"] = 0
+
+    # Normalize recommended_loan_cr — LLM sometimes outputs raw rupees or lakhs
+    rec = assessment.get("recommended_loan_cr")
+    if rec is not None and isinstance(rec, (int, float)):
+        req = requested_loan_cr or 5.0
+        # Convert absurd numbers: LLM might return value in rupees, thousands, or lakhs
+        if rec > 10_000_000:  # Likely in raw rupees
+            rec = round(rec / 10_000_000, 2)
+        elif rec > 100_000:  # Likely in thousands or lakhs
+            rec = round(rec / 100, 2)
+        elif rec > 10_000:  # Possibly in thousands
+            rec = round(rec / 100, 2)
+        # Hard cap: never more than 3x the requested amount or 5000 Cr
+        max_cap = max(min(req * 3, 5000.0), 1.0)
+        if rec > max_cap:
+            rec = round(req * 0.8, 2)
+        # Minimum floor: at least 10% of requested
+        if rec < req * 0.1:
+            rec = round(req * 0.5, 2)
+        assessment["recommended_loan_cr"] = round(rec, 2)
+    elif rec is None:
+        assessment["recommended_loan_cr"] = round((requested_loan_cr or 5.0) * 0.8, 2)
+
+    # Normalize interest_rate_pct — should be between 6% and 24%
+    rate = assessment.get("interest_rate_pct")
+    if rate is not None and isinstance(rate, (int, float)):
+        if rate < 1:  # LLM returned as decimal, e.g. 0.12 for 12%
+            rate = round(rate * 100, 1)
+        rate = max(6.0, min(rate, 24.0))
+        assessment["interest_rate_pct"] = rate
+
+    # Normalize tenor_months — should be between 6 and 120
+    tenor = assessment.get("tenor_months")
+    if tenor is not None and isinstance(tenor, (int, float)):
+        tenor = max(6, min(int(tenor), 120))
+        assessment["tenor_months"] = tenor
 
     # Attach meta
     assessment["company_name"] = company_name

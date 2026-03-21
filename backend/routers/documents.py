@@ -1,6 +1,7 @@
 import os
 import shutil
 import tempfile
+import asyncio
 
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from models.schemas import ProcessDocumentResponse
@@ -31,7 +32,9 @@ async def upload_and_process(file: UploadFile = File(...)):
         tmp_path = tmp.name
 
     try:
-        result = process_document(tmp_path)
+        # Run CPU-heavy processing in a thread so the async event loop isn't blocked
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, process_document, tmp_path)
     finally:
         os.unlink(tmp_path)
 

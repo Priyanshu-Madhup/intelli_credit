@@ -6,40 +6,9 @@ import {
 } from 'lucide-react';
 import {
   PieChart, Pie, Cell, XAxis, YAxis,
-  CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area,
+  CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar
 } from 'recharts';
-
-const stats = [
-  { label: 'Total Applications', value: '247', change: '+12%', up: true,  icon: FileText,      bg: 'bg-blue-50',   iconBg: 'bg-blue-500',  ring: 'ring-blue-100',  text: 'text-blue-600',  sub: 'vs last month' },
-  { label: 'High Risk Companies', value: '18',  change: '+3',   up: true,  icon: AlertTriangle, bg: 'bg-red-50',    iconBg: 'bg-red-500',   ring: 'ring-red-100',   text: 'text-red-600',   sub: 'need attention' },
-  { label: 'Pending Reviews',     value: '34',  change: '-5',   up: false, icon: Clock,         bg: 'bg-amber-50',  iconBg: 'bg-amber-500', ring: 'ring-amber-100', text: 'text-amber-600', sub: 'since last week' },
-  { label: 'Approved Loans',      value: '156', change: '+8%',  up: true,  icon: CheckCircle,   bg: 'bg-green-50',  iconBg: 'bg-green-500', ring: 'ring-green-100', text: 'text-green-600', sub: '78% approval rate' },
-];
-
-const riskData = [
-  { name: 'Low Risk',      value: 110, color: '#22c55e' },
-  { name: 'Medium Risk',   value: 74,  color: '#f59e0b' },
-  { name: 'High Risk',     value: 37,  color: '#ef4444' },
-  { name: 'Under Review',  value: 26,  color: '#94a3b8' },
-];
-
-const monthlyData = [
-  { month: 'Aug', apps: 32, approved: 24 },
-  { month: 'Sep', apps: 41, approved: 31 },
-  { month: 'Oct', apps: 38, approved: 28 },
-  { month: 'Nov', apps: 45, approved: 36 },
-  { month: 'Dec', apps: 52, approved: 41 },
-  { month: 'Jan', apps: 39, approved: 30 },
-];
-
-const recentCompanies = [
-  { name: 'Technovate Solutions Pvt Ltd', sector: 'Technology',    score: 72, amount: '₹4.5 Cr',  status: 'High Risk',   date: 'Jan 8' },
-  { name: 'Greenfield Agro Industries',   sector: 'Agriculture',   score: 34, amount: '₹2.1 Cr',  status: 'Low Risk',    date: 'Jan 7' },
-  { name: 'Horizon Infrastructure Ltd',   sector: 'Construction',  score: 58, amount: '₹12 Cr',   status: 'Medium Risk', date: 'Jan 6' },
-  { name: 'Apex Pharma Solutions',        sector: 'Pharma',        score: 81, amount: '₹7.8 Cr',  status: 'High Risk',   date: 'Jan 5' },
-  { name: 'Prime Textile Mills',          sector: 'Manufacturing', score: 29, amount: '₹3.2 Cr',  status: 'Low Risk',    date: 'Jan 4' },
-];
 
 const statusStyles = {
   'Low Risk':    { bg: 'bg-green-100', text: 'text-green-700' },
@@ -64,16 +33,13 @@ const CustomTooltip = ({ active, payload, label }) => {
 };
 
 export default function Dashboard({ onNavigate }) {
-  const [lastAssessment, setLastAssessment] = useState(null);
   const [lastCompany, setLastCompany]       = useState(null);
   const [history, setHistory]               = useState([]);
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem('ic_assessment');
       const co  = localStorage.getItem('ic_company');
       const hist = localStorage.getItem('ic_history');
-      if (raw)  setLastAssessment(JSON.parse(raw));
       if (co)   setLastCompany(JSON.parse(co));
       if (hist) setHistory(JSON.parse(hist));
     } catch (_) {}
@@ -81,26 +47,24 @@ export default function Dashboard({ onNavigate }) {
 
   const riskLabel = (score) => score >= 70 ? 'High Risk' : score >= 40 ? 'Medium Risk' : 'Low Risk';
 
-  const liveRow = lastAssessment && lastCompany ? [{
-    name:   lastCompany.name,
-    sector: lastCompany.sector,
-    score:  lastAssessment.risk_score ?? 0,
-    amount: lastAssessment.recommended_loan_cr != null ? `₹${lastAssessment.recommended_loan_cr} Cr` : '—',
-    status: riskLabel(lastAssessment.risk_score ?? 0),
-    date:   'Today',
-  }] : [];
+  const highRiskCount = history.filter(h => h.score >= 70).length;
+  const medRiskCount  = history.filter(h => h.score >= 40 && h.score < 70).length;
+  const lowRiskCount  = history.filter(h => h.score < 40).length;
 
-  // Use real assessment history for the table, fall back to static demo data
-  const allCompanies = history.length > 0
-    ? history.slice(0, 6)
-    : [...liveRow, ...recentCompanies].slice(0, 6);
+  const stats = [
+    { label: 'Total Assessments',  value: String(history.length), icon: FileText,      bg: 'bg-blue-50',   iconBg: 'bg-blue-500',  ring: 'ring-blue-100',  text: 'text-blue-600',  sub: 'all time' },
+    { label: 'High Risk',          value: String(highRiskCount),  icon: AlertTriangle, bg: 'bg-red-50',    iconBg: 'bg-red-500',   ring: 'ring-red-100',   text: 'text-red-600',   sub: 'need attention' },
+    { label: 'Medium Risk',        value: String(medRiskCount),   icon: Clock,         bg: 'bg-amber-50',  iconBg: 'bg-amber-500', ring: 'ring-amber-100', text: 'text-amber-600', sub: 'review needed' },
+    { label: 'Low Risk',           value: String(lowRiskCount),   icon: CheckCircle,   bg: 'bg-green-50',  iconBg: 'bg-green-500', ring: 'ring-green-100', text: 'text-green-600', sub: 'healthy' },
+  ];
 
-  // Compute live risk distribution from history (fall back to static when not enough data)
-  const liveRiskData = history.length >= 2 ? [
-    { name: 'Low Risk',    value: history.filter(c => c.score < 40).length,                    color: '#22c55e' },
-    { name: 'Medium Risk', value: history.filter(c => c.score >= 40 && c.score < 70).length,  color: '#f59e0b' },
-    { name: 'High Risk',   value: history.filter(c => c.score >= 70).length,                   color: '#ef4444' },
-  ].filter(d => d.value > 0) : riskData;
+  const allCompanies = history.slice(0, 6);
+
+  const liveRiskData = [
+    { name: 'Low Risk',    value: lowRiskCount,  color: '#22c55e' },
+    { name: 'Medium Risk', value: medRiskCount,  color: '#f59e0b' },
+    { name: 'High Risk',   value: highRiskCount, color: '#ef4444' },
+  ].filter(d => d.value > 0);
 
   // Score history bar chart (last 8 assessments, oldest first)
   const scoreHistory = history.length > 0
@@ -138,10 +102,6 @@ export default function Dashboard({ onNavigate }) {
                 <div className={`${s.iconBg} w-10 h-10 rounded-xl flex items-center justify-center shadow-sm`}>
                   <Icon size={18} className="text-white" />
                 </div>
-                <span className={`flex items-center gap-0.5 text-xs font-semibold ${s.up ? 'text-green-600' : 'text-red-600'}`}>
-                  {s.up ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
-                  {s.change}
-                </span>
               </div>
               <p className="text-slate-500 text-xs font-medium mb-1">{s.label}</p>
               <p className="text-3xl font-bold text-slate-900 leading-none">{s.value}</p>
@@ -158,10 +118,10 @@ export default function Dashboard({ onNavigate }) {
           <div className="flex items-center justify-between mb-5">
             <div>
               <h4 className="text-slate-900 font-semibold text-sm">
-                {scoreHistory ? 'Credit Score History' : 'Applications Trend'}
+                Credit Score History
               </h4>
               <p className="text-slate-400 text-xs mt-0.5">
-                {scoreHistory ? 'Risk scores of assessed companies (low → high risk)' : 'Applications vs Approvals — last 6 months'}
+                {scoreHistory ? 'Risk scores of assessed companies (low → high risk)' : 'No assessment data yet'}
               </p>
             </div>
             {scoreHistory && (
@@ -174,21 +134,9 @@ export default function Dashboard({ onNavigate }) {
                 ))}
               </div>
             )}
-            {!scoreHistory && (
-              <div className="flex items-center gap-4 text-xs">
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block"></span>
-                  <span className="text-slate-500">Applications</span>
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block"></span>
-                  <span className="text-slate-500">Approved</span>
-                </span>
-              </div>
-            )}
           </div>
+          {scoreHistory ? (
           <ResponsiveContainer width="100%" height={190}>
-            {scoreHistory ? (
               <BarChart data={scoreHistory} margin={{ top: 5, right: 5, bottom: 0, left: -15 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                 <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
@@ -203,27 +151,12 @@ export default function Dashboard({ onNavigate }) {
                   ))}
                 </Bar>
               </BarChart>
-            ) : (
-              <AreaChart data={monthlyData} margin={{ top: 5, right: 5, bottom: 0, left: -15 }}>
-                <defs>
-                  <linearGradient id="blueGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="greenGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#22c55e" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                <Tooltip content={<CustomTooltip />} />
-                <Area type="monotone" dataKey="apps" name="Applications" stroke="#3b82f6" strokeWidth={2.5} fill="url(#blueGrad)" dot={false} />
-                <Area type="monotone" dataKey="approved" name="Approved" stroke="#22c55e" strokeWidth={2.5} fill="url(#greenGrad)" dot={false} />
-              </AreaChart>
-            )}
           </ResponsiveContainer>
+          ) : (
+            <div className="h-[190px] flex items-center justify-center">
+              <p className="text-slate-400 text-sm text-center">Run assessments to see credit score history here.</p>
+            </div>
+          )}
         </div>
 
         {/* Risk distribution (takes 2/5) */}
@@ -232,6 +165,7 @@ export default function Dashboard({ onNavigate }) {
             <h4 className="text-slate-900 font-semibold text-sm">Risk Distribution</h4>
             <p className="text-slate-400 text-xs mt-0.5">Current portfolio breakdown</p>
           </div>
+          {liveRiskData.length > 0 ? (
           <ResponsiveContainer width="100%" height={150}>
             <PieChart>
               <Pie data={liveRiskData} cx="50%" cy="50%" innerRadius={45} outerRadius={68} paddingAngle={3} dataKey="value" strokeWidth={0}>
@@ -242,6 +176,11 @@ export default function Dashboard({ onNavigate }) {
               <Tooltip formatter={(v, n) => [v, n]} contentStyle={{ fontSize: 11, borderRadius: 10 }} />
             </PieChart>
           </ResponsiveContainer>
+          ) : (
+            <div className="h-[150px] flex items-center justify-center">
+              <p className="text-slate-400 text-sm text-center">No risk distribution data yet</p>
+            </div>
+          )}
           <div className="space-y-2 mt-2">
             {liveRiskData.map((d) => (
               <div key={d.name} className="flex items-center justify-between text-xs">
@@ -317,6 +256,13 @@ export default function Dashboard({ onNavigate }) {
                   </tr>
                 );
               })}
+              {allCompanies.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-5 py-8 text-center text-slate-400 text-sm">
+                    No assessments yet. Start a new assessment to see results here.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

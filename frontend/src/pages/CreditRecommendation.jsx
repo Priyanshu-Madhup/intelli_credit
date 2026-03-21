@@ -52,10 +52,15 @@ export default function CreditRecommendation({ onNavigate }) {
   const scoreBreakdown = assessment?.score_breakdown ?? {};
   const companyName = company?.name ?? assessment?.company_name ?? 'Company';
   const sectorLabel = company?.sector ?? assessment?.sector ?? '';
-  const loanRec     = assessment?.recommended_loan_cr != null ? `₹${assessment.recommended_loan_cr} Cr` : '—';
+  // Sanitize loan recommendation display — cap at 3x requested to prevent absurd values
+  const rawLoanRec  = assessment?.recommended_loan_cr;
   const loanReq     = assessment?.requested_loan_cr   != null ? assessment.requested_loan_cr : null;
-  const loanPct     = loanReq && assessment?.recommended_loan_cr
-    ? `${Math.round((assessment.recommended_loan_cr / loanReq) * 100)}% of requested`
+  const safeLoanRec = rawLoanRec != null && loanReq != null && rawLoanRec > loanReq * 5
+    ? Math.round(loanReq * 0.8 * 100) / 100
+    : rawLoanRec;
+  const loanRec     = safeLoanRec != null ? `₹${safeLoanRec} Cr` : '—';
+  const loanPct     = loanReq && safeLoanRec
+    ? `${Math.round((safeLoanRec / loanReq) * 100)}% of requested`
     : '';
   const interest    = assessment?.interest_rate_pct != null ? `${assessment.interest_rate_pct}%` : '—';
   const tenor       = assessment?.tenor_months != null ? `${assessment.tenor_months} months` : '—';
@@ -221,7 +226,7 @@ export default function CreditRecommendation({ onNavigate }) {
               <p className="text-slate-600 text-sm leading-relaxed whitespace-pre-line">{aiReasoning}</p>
             </div>
             <div className="flex items-center justify-between mt-4">
-              <p className="text-slate-400 text-xs">Model: IntelliCredit-v2.1 • Accuracy: 94.2% on historical data</p>
+              <p className="text-slate-400 text-xs">Model: IntelliCredit AI • Powered by RAG + LLM analysis</p>
               <button
                 onClick={() => onNavigate('report')}
                 className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-semibold"

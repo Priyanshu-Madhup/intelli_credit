@@ -1,15 +1,26 @@
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from routers import documents, query, assess, charts
+from routers import documents, query, assess, charts, research
 
 load_dotenv()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Pre-load the embedding model at startup so first request is fast
+    from services.document_processor import _get_embedding_model
+    _get_embedding_model()
+    yield
+
 
 app = FastAPI(
     title="IntelliCredit API",
     description="AI-powered credit appraisal backend",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -24,6 +35,7 @@ app.include_router(documents.router)
 app.include_router(query.router)
 app.include_router(assess.router)
 app.include_router(charts.router)
+app.include_router(research.router)
 
 
 @app.get("/health", tags=["Health"])

@@ -1,49 +1,36 @@
-﻿"""
+"""
 Financial chart data extraction service.
 
-Reads the raw extracted PDF text (saved during document processing) and asks Groq
-to extract every financial number it can find, producing chart-ready JSON.
+One FAISS query (no LLM cost) → one LLM call.
+FAISS was populated at upload time; this just retrieves the top-k chunks
+covering all financial topics in a single broad semantic query.
 """
 import json
-import os
 import re
 from typing import Dict
 
 from groq import Groq
 from dotenv import load_dotenv
 
-from services.document_processor import GROQ_API_KEY, GROQ_MODEL, FAISS_INDEX_PATH
-from services.rag_service import get_all_chunks
+from services.document_processor import GROQ_API_KEY, GROQ_MODEL, truncate_chunks_by_tokens
 
 load_dotenv()
 
-RAW_TEXT_PATH = os.path.join(os.path.dirname(FAISS_INDEX_PATH) or '.', 'raw_document_text.txt')
+# Tokens of document context to send to the LLM
+_CONTEXT_TOKEN_BUDGET = 1200
 
-_SCHEMA = r"""Return ONLY a valid JSON object. No markdown, no code fences, no text outside the JSON.
-
-YOUR TASK: Read the document text below and extract EVERY financial number you can find.
-
-RULES:
-1. Look for ANY numbers: revenue, sales, income, profit, loss, debt, equity, turnover, ratios, margins, fees, grants, expenditure, assets, liabilities, disbursements, AUM, loan book size, interest income, operating expenses.
-2. For yearly_trend: find figures for multiple years/periods. Look for FY22, FY23, 2022-23, March 2022, year ended, Q1, Q2, etc.
-3. All monetary values in yearly_trend MUST be floats in Crore. Divide Lakhs by 100. Divide thousands by 10000000. Divide millions by 10.
-4. If a number is genuinely absent, use null — NEVER use dashes or N/A in numeric fields.
-5. For string fields in financial_overview: write what you found (e.g. "48.2 Cr"); write "N/A" only if truly not in doc.
-6. yearly_trend must have at least 1 entry if ANY year-wise number exists.
-7. If the document mentions AUM, disbursement amounts, loan book size, or portfolio values — treat the LARGEST as "revenue". Treat operating profit or PAT as "profit". Treat total borrowings or debt on books as "debt".
-
-{
+_SCHEMA = r"""{
   "yearly_trend": [
-    {"year": "<FY label>", "revenue": <float|null>, "profit": <float|null>, "debt": <float|null>}
+    {"year": "<FY label e.g. FY24>", "revenue": <float Cr|null>, "profit": <float Cr|null>, "debt": <float Cr|null>}
   ],
   "financial_overview": {
-    "annual_revenue":       "<latest revenue/AUM/income string e.g. 48.2 Cr or N/A>",
+    "annual_revenue":       "<string e.g. 723 Cr, or N/A>",
     "annual_revenue_delta": "<YoY change e.g. +11.4% or N/A>",
     "annual_revenue_trend": "<up|down>",
-    "net_profit":           "<latest profit/loss/PAT string or N/A>",
+    "net_profit":           "<string or N/A>",
     "net_profit_margin":    "<margin % string or N/A>",
     "net_profit_trend":     "<up|down>",
-    "total_debt":           "<total loans/liabilities/borrowings string or N/A>",
+    "total_debt":           "<string or N/A>",
     "de_ratio":             "<Debt/Equity ratio e.g. 1.8x or N/A>",
     "total_debt_trend":     "<up|down>",
     "gst_turnover":         "<GST turnover string or N/A>",
@@ -60,39 +47,75 @@ RULES:
 }"""
 
 
-def _read_raw_text() -> str:
-    """Read the raw document text saved during PDF processing."""
-    if not os.path.exists(RAW_TEXT_PATH):
-        return ""
-    with open(RAW_TEXT_PATH, 'r', encoding='utf-8') as f:
-        return f.read()
+def _sanitize_llm_json(raw: str) -> str:
+    if raw.startswith("```"):
+        raw = re.sub(r"^```[a-zA-Z]*\n?", "", raw)
+        raw = re.sub(r"\n?```$", "", raw.strip())
+    raw = re.sub(r':\s*[\u2014\u2013]\s*([,}\]])', r': null\1', raw)
+    raw = re.sub(r':\s*"[\u2014\u2013]"\s*([,}\]])', r': null\1', raw)
+    raw = re.sub(r':\s*[\u2014\u2013]\s*$', ': null', raw, flags=re.MULTILINE)
+    raw = re.sub(r':\s*"null"\s*([,}\]])', r': null\1', raw)
+    return raw
 
 
 def fetch_chart_data(company_name: str = "") -> Dict:
+    """
+    Two focused FAISS queries (free, no LLM) — interleaved so all 4 topics
+    (revenue, profit, debt, GST) get representation before the token budget cuts off.
+    Then one LLM call to extract everything.
+    """
     if not GROQ_API_KEY:
         raise RuntimeError("GROQ_API_KEY is not set.")
 
-    raw_text = _read_raw_text()
-    if not raw_text.strip():
-        # Fallback: concatenate FAISS chunk content (may be summaries only)
-        all_chunks = get_all_chunks()
-        if not all_chunks:
-            return _empty()
-        raw_text = "\n\n".join(c.get('content', '') for c in all_chunks)
+    from services.rag_service import retrieve_chunks
 
-    # Send up to 28000 chars of raw PDF text — this preserves actual numbers
-    context = raw_text[:28000]
+    # 2 targeted queries × top_k=2 (exact, no boost) → max 4 unique chunks, 1 LLM call
+    chunks_rev = retrieve_chunks(
+        "revenue INR crore PAT profit after tax FY YoY",
+        top_k=2,
+        exact=True,
+    )
+    # Query 2: debt + GST + ratios
+    chunks_debt = retrieve_chunks(
+        "debt borrowings INR crore GST equity ratio",
+        top_k=2,
+        exact=True,
+    )
+
+    # Interleave: take 1 from each alternately so all topics survive the token budget
+    seen: set = set()
+    chunks: list = []
+    for pair in zip(chunks_rev or [], chunks_debt or []):
+        for c in pair:
+            key = c.get("content", "")[:100]
+            if key not in seen:
+                seen.add(key)
+                chunks.append(c)
+    # Append any leftovers from the longer list
+    for c in (chunks_rev or []) + (chunks_debt or []):
+        key = c.get("content", "")[:100]
+        if key not in seen:
+            seen.add(key)
+            chunks.append(c)
+
+    if not chunks:
+        return _empty()
+
+    trimmed = truncate_chunks_by_tokens(chunks, max_tokens=_CONTEXT_TOKEN_BUDGET)
+    context = "\n\n".join(
+        f"[{c.get('section', 'Doc')}]\n{c['content']}" for c in trimmed
+    )
 
     client = Groq(api_key=GROQ_API_KEY)
     prompt = (
-        "You are a financial data extractor trained on Indian company documents.\n"
+        "You are a financial data extractor for Indian company documents.\n"
         + (f"Company: {company_name}\n" if company_name else "")
-        + "\nThe text below is the COMPLETE content of the uploaded document. "
-        "Extract EVERY financial number, ratio, and monetary figure you can find. "
-        "Include figures from tables, narrative text, summaries, and footnotes. "
-        "Convert all amounts to Crore (Rs.).\n\n"
-        f"FULL DOCUMENT CONTENT:\n{context}\n\n"
-        f"Extract all financial data following this schema:\n{_SCHEMA}"
+        + "Extract ALL financial figures from the excerpts below. "
+        "PAT (Profit After Tax) = net_profit — map it to the net_profit field.\n"
+        "Convert every amount to Crore (Rs.). Divide Lakhs÷100, Millions÷10.\n"
+        "Return ONLY valid JSON — no markdown, no code fences, no extra text.\n\n"
+        f"Document excerpts:\n{context}\n\n"
+        f"Required JSON schema:\n{_SCHEMA}"
     )
 
     try:
@@ -100,44 +123,28 @@ def fetch_chart_data(company_name: str = "") -> Dict:
             model=GROQ_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.05,
-            max_tokens=2000,
+            max_tokens=800,
         )
-        raw = response.choices[0].message.content.strip()
+        raw = _sanitize_llm_json(response.choices[0].message.content.strip())
+        data = json.loads(raw)
+
+        # Coerce string values in profitability_metrics to None
+        pm = data.get("profitability_metrics", {})
+        for k in list(pm.keys()):
+            if isinstance(pm[k], str):
+                pm[k] = None
+
+        # Drop all-zero/null yearly rows
+        data["yearly_trend"] = [
+            row for row in data.get("yearly_trend", [])
+            if any(
+                v is not None and v != 0
+                for v in [row.get("revenue"), row.get("profit"), row.get("debt")]
+            )
+        ]
+        return data
     except Exception:
         return _empty()
-
-    if raw.startswith("```"):
-        raw = re.sub(r"^```[a-zA-Z]*\n?", "", raw)
-        raw = re.sub(r"\n?```$", "", raw.strip())
-
-    raw = re.sub(r':\s*[\u2014\u2013]\s*([,}\]])', r': null\1', raw)
-    raw = re.sub(r':\s*"[\u2014\u2013]"\s*([,}\]])', r': null\1', raw)
-    raw = re.sub(r':\s*[\u2014\u2013]\s*$', ': null', raw, flags=re.MULTILINE)
-    raw = re.sub(r':\s*"null"\s*([,}\]])', r': null\1', raw)
-
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return _empty()
-
-    data.setdefault("yearly_trend", [])
-    data.setdefault("financial_overview", {})
-    data.setdefault("profitability_metrics", {})
-
-    pm = data.get("profitability_metrics", {})
-    for k in list(pm.keys()):
-        if isinstance(pm[k], str):
-            pm[k] = None
-
-    data["yearly_trend"] = [
-        row for row in data["yearly_trend"]
-        if any(
-            v is not None and v != 0
-            for v in [row.get("revenue"), row.get("profit"), row.get("debt")]
-        )
-    ]
-
-    return data
 
 
 def _empty() -> Dict:

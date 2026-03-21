@@ -92,7 +92,16 @@ export default function AIAnalysis({ onNavigate }) {
   const [chartFetching, setChartFetching] = useState(false);
 
   useEffect(() => {
-    // Animate loading screen then reveal data
+    // If no assessment data exists yet, skip the animation entirely
+    const rawCheck = localStorage.getItem('ic_assessment');
+    if (!rawCheck) {
+      setLoading(false);
+      return;
+    }
+
+    // Animate loading screen then reveal data — no extra API calls on mount.
+    // All financial data (financial_overview, yearly_trend) is already in localStorage
+    // from the /assess call that ran during New Assessment.
     const stepTimers = [0, 1, 2, 3].map(i =>
       setTimeout(() => setSteps(prev => { const n = [...prev]; n[i] = true; return n; }), (i + 1) * 600)
     );
@@ -103,31 +112,11 @@ export default function AIAnalysis({ onNavigate }) {
       if (p >= 100) {
         clearInterval(iv);
         setTimeout(() => {
-          // Load persisted assessment from localStorage
           try {
             const raw = localStorage.getItem('ic_assessment');
             const co  = localStorage.getItem('ic_company');
-            const parsedA = raw ? JSON.parse(raw) : null;
-            const parsedC = co  ? JSON.parse(co)  : null;
-            if (parsedA) setAssessment(parsedA);
-            if (parsedC) setCompany(parsedC);
-
-            // Trigger chart fetch whenever financial values are absent, N/A, or yearly data is all-zeros
-            const hasRealRevenue = parsedA?.financial_overview?.annual_revenue
-              && !['N/A', 'n/a', '—', '', 'null'].includes(String(parsedA.financial_overview.annual_revenue).trim());
-            const hasRealYearly = parsedA?.yearly_trend?.some(r =>
-              (r.revenue != null && r.revenue > 0) ||
-              (r.profit  != null && r.profit  > 0) ||
-              (r.debt    != null && r.debt    > 0)
-            );
-            // Always fetch from vector DB if data looks missing/dummy
-            const needsChartFetch = !hasRealRevenue || !hasRealYearly;
-            const cname = parsedC?.name || parsedA?.company_name || '';
-            setChartFetching(true);
-            fetchChartData(cname)
-              .then(d => setChartData(d))
-              .catch(() => {})
-              .finally(() => setChartFetching(false));
+            if (raw) setAssessment(JSON.parse(raw));
+            if (co)  setCompany(JSON.parse(co));
           } catch (_) {}
           setLoading(false);
         }, 300);
@@ -136,26 +125,71 @@ export default function AIAnalysis({ onNavigate }) {
     return () => { stepTimers.forEach(clearTimeout); clearInterval(iv); };
   }, []);
 
+  // Helper: check if a value is meaningful (not N/A, dash, empty, null)
+  function isMeaningful(v) {
+    if (v == null) return false;
+    const s = String(v).trim();
+    return s.length > 0 && !['N/A', 'n/a', '—', '', 'null', '-'].includes(s);
+  }
+
   // Helper: check if a financial_overview object has real (non-N/A) values
   function hasMeaningfulFO(fo) {
     if (!fo) return false;
-    const rev = String(fo.annual_revenue || '').trim();
-    return rev.length > 0 && !['N/A', 'n/a', '—', '', 'null'].includes(rev);
+    return isMeaningful(fo.annual_revenue);
   }
 
-  // Prefer fetched chart data over assessment data, but only when it has real values
-  const effFO = hasMeaningfulFO(chartData?.financial_overview)
-    ? chartData.financial_overview
-    : hasMeaningfulFO(assessment?.financial_overview)
-      ? assessment.financial_overview
-      : chartData?.financial_overview || assessment?.financial_overview;
-  const financials  = buildFinancials(effFO);
+  // Merge financial_overview from chart + assessment, preferring non-empty values
+  function mergeFO(primary, secondary) {
+    if (!primary && !secondary) return {};
+    if (!primary) return { ...secondary };
+    if (!secondary) return { ...primary };
+    const merged = { ...secondary };
+    for (const [k, v] of Object.entries(primary)) {
+      if (isMeaningful(v)) merged[k] = v;
+    }
+    return merged;
+  }
+
+  const chartFO = chartData?.financial_overview || {};
+  const assessFO = assessment?.financial_overview || {};
+  const rawMergedFO = hasMeaningfulFO(chartFO)
+    ? mergeFO(chartFO, assessFO)
+    : hasMeaningfulFO(assessFO)
+      ? mergeFO(assessFO, chartFO)
+      : mergeFO(chartFO, assessFO);
+
+  // Enrich financial_overview from profitability_metrics
+  const profMetrics = chartData?.profitability_metrics || assessment?.profitability_metrics || {};
+  const enrichedFO = { ...rawMergedFO };
+  if (!isMeaningful(enrichedFO.net_profit_margin) && profMetrics.net_margin_pct != null) {
+    enrichedFO.net_profit_margin = `${profMetrics.net_margin_pct}%`;
+  }
+  if (!isMeaningful(enrichedFO.de_ratio) && profMetrics.de_ratio_num != null) {
+    enrichedFO.de_ratio = `${profMetrics.de_ratio_num}x`;
+  }
+
+  const financials  = buildFinancials(enrichedFO);
   const alerts      = assessment?.risk_alerts || [];
   const yearlyData  = (chartData?.yearly_trend?.length ? chartData.yearly_trend : assessment?.yearly_trend) || [];
-  const profMetrics = chartData?.profitability_metrics || {};
   const hasProfMetrics = Object.values(profMetrics).some(v => v != null);
   const RISK_SCORE  = assessment?.risk_score ?? 0;
   const companyLabel = company ? `${company.name} • ${company.sector}` : (assessment?.company_name ? `${assessment.company_name} • ${assessment.sector}` : 'Company');
+
+  // Persist enriched assessment data to localStorage so CAM Report and other pages get real data
+  useEffect(() => {
+    if (!loading && assessment) {
+      try {
+        const enriched = {
+          ...assessment,
+          financial_overview: enrichedFO,
+          yearly_trend: yearlyData.length > 0 ? yearlyData : assessment.yearly_trend,
+          profitability_metrics: Object.keys(profMetrics).length > 0 ? profMetrics : assessment.profitability_metrics,
+        };
+        localStorage.setItem('ic_assessment', JSON.stringify(enriched));
+      } catch (_) {}
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, enrichedFO, yearlyData, profMetrics]);
 
   const stepLabels = ['Parsing uploaded documents', 'Extracting financial ratios', 'Running risk assessment models', 'Compiling final report'];
 
@@ -190,17 +224,21 @@ export default function AIAnalysis({ onNavigate }) {
     );
   }
 
-          const yearlyHasRealData = yearlyData.some(r =>
-            (r.revenue != null && r.revenue > 0) ||
-            (r.profit  != null && r.profit  > 0) ||
-            (r.debt    != null && r.debt    > 0)
-          );
+
 
   const doFetchCharts = () => {
     const cname = company?.name || assessment?.company_name || '';
     setChartFetching(true);
     fetchChartData(cname)
-      .then(d => setChartData(d))
+      .then(d => setChartData(prev => {
+        if (!prev) return d;
+        const mergedFO = { ...(prev.financial_overview || {}), ...(d.financial_overview || {}) };
+        if (!d.financial_overview?.gst_turnover && prev.financial_overview?.gst_turnover) {
+          mergedFO.gst_turnover = prev.financial_overview.gst_turnover;
+          mergedFO.gst_turnover_trend = prev.financial_overview.gst_turnover_trend || 'up';
+        }
+        return { ...d, financial_overview: mergedFO };
+      }))
       .catch(() => {})
       .finally(() => setChartFetching(false));
   };

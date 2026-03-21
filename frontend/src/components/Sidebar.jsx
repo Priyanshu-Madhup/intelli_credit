@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   LayoutDashboard, FileSearch, Brain, Globe, Award,
-  FileText, Zap, ChevronRight, Settings, LogOut
+  FileText, MessageSquare, Zap, ChevronRight, Settings, LogOut
 } from 'lucide-react';
 
 const navItems = [
@@ -11,6 +11,7 @@ const navItems = [
   { id: 'research',        label: 'Research Insights',   icon: Globe },
   { id: 'recommendation',  label: 'Credit Decision',     icon: Award },
   { id: 'report',          label: 'CAM Report',          icon: FileText },
+  { id: 'docquery',        label: 'Document Q&A',        icon: MessageSquare },
 ];
 
 export default function Sidebar({ currentPage, onNavigate }) {

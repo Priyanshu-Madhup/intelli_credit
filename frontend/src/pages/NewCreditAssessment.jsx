@@ -1,9 +1,9 @@
 import React, { useState, useRef } from 'react';
 import {
   Building2, MapPin, Briefcase, Upload, FileText,
-  CheckCircle, X, Brain, ChevronRight, AlertCircle, Loader
+  CheckCircle, X, Brain, ChevronRight, AlertCircle, Loader, ClipboardList, Plus, Trash2
 } from 'lucide-react';
-import { uploadDocuments, runAssessment } from '../api';
+import { runAssessment } from '../api';
 
 const sectors = ['Technology', 'Manufacturing', 'Agriculture', 'Pharma', 'Construction', 'Retail', 'Finance', 'Infrastructure', 'Textiles', 'Healthcare'];
 const locations = ['Mumbai', 'Delhi', 'Bengaluru', 'Chennai', 'Hyderabad', 'Pune', 'Ahmedabad', 'Kolkata', 'Jaipur', 'Surat'];
@@ -16,15 +16,15 @@ const docTypes = [
   { id: 'legal',  label: 'Legal Notices',   icon: '⚖️', desc: 'Any legal notices / court orders',    accept: '.pdf,.docx' },
 ];
 
-function FileUploadCard({ doc, file, onUpload, onRemove, dragActive, onDragEnter, onDragLeave, onDrop }) {
+function FileUploadCard({ doc, file, onUpload, onRemove, dragActive, onDragEnter, onDragLeave, onDrop, isUploading, isProcessed, uploadError }) {
   const inputRef = useRef(null);
 
   return (
     <div
       className={`relative border-2 border-dashed rounded-2xl p-5 transition-all duration-200 cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 ${
-        dragActive ? 'border-blue-500 bg-blue-50 scale-[1.01]' : file ? 'border-green-400 bg-green-50/40' : 'border-slate-200 bg-slate-50/50'
+        dragActive ? 'border-blue-500 bg-blue-50 scale-[1.01]' : isProcessed ? 'border-green-400 bg-green-50/40' : isUploading ? 'border-blue-300 bg-blue-50/30' : file ? 'border-amber-300 bg-amber-50/30' : 'border-slate-200 bg-slate-50/50'
       }`}
-      onClick={() => !file && inputRef.current?.click()}
+      onClick={() => !file && !isUploading && inputRef.current?.click()}
       onDragOver={e => e.preventDefault()}
       onDragEnter={onDragEnter}
       onDragLeave={onDragLeave}
@@ -38,30 +38,35 @@ function FileUploadCard({ doc, file, onUpload, onRemove, dragActive, onDragEnter
         onChange={e => e.target.files?.[0] && onUpload(e.target.files[0])}
       />
       <div className="flex items-center gap-4">
-        <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl flex-shrink-0 ${file ? 'bg-green-100' : dragActive ? 'bg-blue-100' : 'bg-white border border-slate-200'}`}>
-          {file ? '✅' : doc.icon}
+        <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl flex-shrink-0 ${isProcessed ? 'bg-green-100' : isUploading ? 'bg-blue-100' : file ? 'bg-amber-100' : dragActive ? 'bg-blue-100' : 'bg-white border border-slate-200'}`}>
+          {isProcessed ? '✅' : isUploading ? '⏳' : file ? '📄' : doc.icon}
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-slate-800 font-semibold text-sm">{doc.label}</p>
-          {file ? (
-            <p className="text-green-600 text-xs font-medium mt-0.5 truncate">{file.name}</p>
+          {isUploading ? (
+            <p className="text-blue-600 text-xs font-medium mt-0.5 flex items-center gap-1"><Loader size={10} className="animate-spin" /> Processing into vector DB…</p>
+          ) : isProcessed ? (
+            <p className="text-green-600 text-xs font-medium mt-0.5 truncate">✓ {file.name} — indexed</p>
+          ) : file ? (
+            <p className="text-amber-600 text-xs font-medium mt-0.5 truncate">{file.name}</p>
           ) : (
             <p className="text-slate-400 text-xs mt-0.5">{doc.desc}</p>
           )}
+          {uploadError && <p className="text-red-500 text-xs mt-0.5">{uploadError}</p>}
         </div>
-        {file ? (
+        {file && !isUploading ? (
           <button
             onClick={e => { e.stopPropagation(); onRemove(); }}
             className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
           >
             <X size={15} />
           </button>
-        ) : (
+        ) : !file ? (
           <div className="flex-shrink-0 flex items-center gap-1.5 text-xs text-slate-400">
             <Upload size={13} />
             <span>Upload</span>
           </div>
-        )}
+        ) : null}
       </div>
       {dragActive && (
         <div className="absolute inset-0 rounded-2xl flex items-center justify-center bg-blue-500/10">
@@ -73,14 +78,47 @@ function FileUploadCard({ doc, file, onUpload, onRemove, dragActive, onDragEnter
 }
 
 export default function NewCreditAssessment({ onNavigate }) {
-  const [form, setForm] = useState({ name: '', sector: '', location: '', email: '', loan: '' });
+  const [form, setForm] = useState({ name: '', sector: '', location: '', email: '', loan: '', promoter_name: '', incorporation_year: '', gstin: '', annual_revenue: '', net_profit: '', total_debt: '', employee_count: '' });
   const [files, setFiles] = useState({});
+  const [processedFiles, setProcessedFiles] = useState({});  // track which files are processed in vector DB
+  const [uploading, setUploading] = useState({});  // per-file upload status
   const [dragActive, setDragActive] = useState(null);
   const [running, setRunning] = useState(false);
   const [errors, setErrors] = useState({});
   const [runStep, setRunStep] = useState('');
+  const [primaryNotes, setPrimaryNotes] = useState([
+    { id: 1, type: 'site_visit', text: '' },
+  ]);
 
-  const handleChange = (field, value) => setForm(f => ({ ...f, [field]: value }));
+  const noteTypes = [
+    { value: 'site_visit', label: 'Factory/Site Visit Observation' },
+    { value: 'management_interview', label: 'Management Interview' },
+    { value: 'market_feedback', label: 'Market/Supplier Feedback' },
+    { value: 'operational', label: 'Operational Observation' },
+    { value: 'other', label: 'Other Due Diligence Note' },
+  ];
+
+  const addNote = () => setPrimaryNotes(prev => [...prev, { id: Date.now(), type: 'site_visit', text: '' }]);
+  const removeNote = (id) => setPrimaryNotes(prev => prev.filter(n => n.id !== id));
+  const updateNote = (id, field, value) => setPrimaryNotes(prev => prev.map(n => n.id === id ? { ...n, [field]: value } : n));
+
+  const handleChange = (field, value) => {
+    setForm(f => ({ ...f, [field]: value }));
+  };
+
+  // Store the selected file locally; actual processing happens on Run
+  const handleFileUpload = (docId, file) => {
+    setFiles(prev => ({ ...prev, [docId]: file }));
+    setErrors(prev => { const n = { ...prev }; delete n[`upload_${docId}`]; return n; });
+  };
+
+  const handleFileRemove = (docId) => {
+    setFiles(prev => { const n = { ...prev }; delete n[docId]; return n; });
+    setProcessedFiles(prev => { const n = { ...prev }; delete n[docId]; return n; });
+    setErrors(prev => { const n = { ...prev }; delete n[`upload_${docId}`]; return n; });
+  };
+
+
 
   const validate = () => {
     const e = {};
@@ -96,25 +134,33 @@ export default function NewCreditAssessment({ onNavigate }) {
     setRunning(true);
     setErrors({});
     try {
-      let companyName = form.name.trim();
-
-      // Step 1: upload & process documents
+      // Step 1: process uploaded documents into vector DB
       if (Object.keys(files).length > 0) {
-        setRunStep('Uploading and processing documents…');
-        const uploadResults = await uploadDocuments(files);
-
-        // Auto-detect company name from documents if field is blank
-        if (!companyName) {
-          const detected = uploadResults.find(r => r.company_name)?.company_name || '';
-          if (detected) {
-            companyName = detected;
-            handleChange('name', detected);
+        setRunStep('Processing documents into vector DB…');
+        for (const [docId, file] of Object.entries(files)) {
+          setUploading(prev => ({ ...prev, [docId]: true }));
+          try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:8000'}/documents/process`, {
+              method: 'POST',
+              body: formData,
+            });
+            if (res.ok) {
+              const result = await res.json();
+              setProcessedFiles(prev => ({ ...prev, [docId]: result }));
+            }
+          } catch (_) {
+            // continue with remaining files
+          } finally {
+            setUploading(prev => { const n = { ...prev }; delete n[docId]; return n; });
           }
         }
       }
 
+      const companyName = form.name.trim();
       if (!companyName) {
-        setErrors({ name: 'Company name is required — enter it or upload a document so it can be detected.' });
+        setErrors({ name: 'Company name is required.' });
         return;
       }
 
@@ -125,6 +171,12 @@ export default function NewCreditAssessment({ onNavigate }) {
       // Persist for downstream pages
       localStorage.setItem('ic_assessment', JSON.stringify(assessment));
       localStorage.setItem('ic_company', JSON.stringify({ name: companyName, sector: form.sector, location: form.location }));
+
+      // Persist primary insights for downstream pages (CAM report, research)
+      const filledNotes = primaryNotes.filter(n => n.text.trim());
+      if (filledNotes.length > 0) {
+        localStorage.setItem('ic_primary_notes', JSON.stringify(filledNotes));
+      }
 
       // Append to history for Dashboard tracking
       try {
@@ -151,6 +203,7 @@ export default function NewCreditAssessment({ onNavigate }) {
   };
 
   const uploadCount = Object.keys(files).length;
+  const processedCount = Object.keys(processedFiles).length;
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6 animate-fade-in">
@@ -275,8 +328,8 @@ export default function NewCreditAssessment({ onNavigate }) {
               key={doc.id}
               doc={doc}
               file={files[doc.id]}
-              onUpload={f => setFiles(prev => ({ ...prev, [doc.id]: f }))}
-              onRemove={() => setFiles(prev => { const n = { ...prev }; delete n[doc.id]; return n; })}
+              onUpload={f => handleFileUpload(doc.id, f)}
+              onRemove={() => handleFileRemove(doc.id)}
               dragActive={dragActive === doc.id}
               onDragEnter={() => setDragActive(doc.id)}
               onDragLeave={() => setDragActive(null)}
@@ -284,8 +337,11 @@ export default function NewCreditAssessment({ onNavigate }) {
                 e.preventDefault();
                 setDragActive(null);
                 const f = e.dataTransfer.files?.[0];
-                if (f) setFiles(prev => ({ ...prev, [doc.id]: f }));
+                if (f) handleFileUpload(doc.id, f);
               }}
+              isUploading={!!uploading[doc.id]}
+              isProcessed={!!processedFiles[doc.id]}
+              uploadError={errors[`upload_${doc.id}`]}
             />
           ))}
         </div>
@@ -295,13 +351,119 @@ export default function NewCreditAssessment({ onNavigate }) {
             Upload at least one document to run AI analysis. More documents = more accurate results.
           </div>
         )}
+
+
+      </div>
+
+      {/* Additional Details — optional fields */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-50 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-slate-50 flex items-center justify-center">
+              <FileText size={18} className="text-slate-500" />
+            </div>
+            <div>
+              <h3 className="text-slate-900 font-semibold text-sm">Additional Details <span className="text-slate-400 font-normal">(optional)</span></h3>
+              <p className="text-slate-400 text-xs">Financial and operational details to supplement the AI assessment</p>
+            </div>
+          </div>
+          <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-5">
+            {/* Promoter Name */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Promoter / Director Name</label>
+              <input type="text" value={form.promoter_name} onChange={e => handleChange('promoter_name', e.target.value)} placeholder="e.g. Rajesh Kumar" className="w-full px-4 py-2.5 text-sm border border-slate-200 bg-slate-50 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400 transition-all" />
+            </div>
+            {/* Incorporation Year */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Incorporation Year</label>
+              <input type="text" value={form.incorporation_year} onChange={e => handleChange('incorporation_year', e.target.value)} placeholder="e.g. 2015" className="w-full px-4 py-2.5 text-sm border border-slate-200 bg-slate-50 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400 transition-all" />
+            </div>
+            {/* GSTIN */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">GSTIN</label>
+              <input type="text" value={form.gstin} onChange={e => handleChange('gstin', e.target.value)} placeholder="e.g. 27AABCU9603R1ZM" className="w-full px-4 py-2.5 text-sm border border-slate-200 bg-slate-50 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400 transition-all" />
+            </div>
+            {/* Annual Revenue */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Annual Revenue (₹ Cr)</label>
+              <input type="text" value={form.annual_revenue} onChange={e => handleChange('annual_revenue', e.target.value)} placeholder="e.g. 120" className="w-full px-4 py-2.5 text-sm border border-slate-200 bg-slate-50 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400 transition-all" />
+            </div>
+            {/* Net Profit */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Net Profit (₹ Cr)</label>
+              <input type="text" value={form.net_profit} onChange={e => handleChange('net_profit', e.target.value)} placeholder="e.g. 8.5" className="w-full px-4 py-2.5 text-sm border border-slate-200 bg-slate-50 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400 transition-all" />
+            </div>
+            {/* Total Debt */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Total Debt (₹ Cr)</label>
+              <input type="text" value={form.total_debt} onChange={e => handleChange('total_debt', e.target.value)} placeholder="e.g. 25" className="w-full px-4 py-2.5 text-sm border border-slate-200 bg-slate-50 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400 transition-all" />
+            </div>
+            {/* Employee Count */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Employee Count</label>
+              <input type="text" value={form.employee_count} onChange={e => handleChange('employee_count', e.target.value)} placeholder="e.g. 350" className="w-full px-4 py-2.5 text-sm border border-slate-200 bg-slate-50 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400 transition-all" />
+            </div>
+          </div>
+        </div>
+
+      {/* Primary Insights — Due Diligence Notes */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-50 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-emerald-50 flex items-center justify-center">
+              <ClipboardList size={18} className="text-emerald-600" />
+            </div>
+            <div>
+              <h3 className="text-slate-900 font-semibold text-sm">Primary Due Diligence Notes</h3>
+              <p className="text-slate-400 text-xs">Site visit observations, management interviews & qualitative insights</p>
+            </div>
+          </div>
+          <button
+            onClick={addNote}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl transition-all"
+          >
+            <Plus size={12} /> Add Note
+          </button>
+        </div>
+        <div className="p-6 space-y-4">
+          {primaryNotes.map((note, idx) => (
+            <div key={note.id} className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-400">#{idx + 1}</span>
+                  <select
+                    value={note.type}
+                    onChange={e => updateNote(note.id, 'type', e.target.value)}
+                    className="text-xs font-semibold border border-slate-200 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-400"
+                  >
+                    {noteTypes.map(nt => <option key={nt.value} value={nt.value}>{nt.label}</option>)}
+                  </select>
+                </div>
+                {primaryNotes.length > 1 && (
+                  <button onClick={() => removeNote(note.id)} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all">
+                    <Trash2 size={13} />
+                  </button>
+                )}
+              </div>
+              <textarea
+                value={note.text}
+                onChange={e => updateNote(note.id, 'text', e.target.value)}
+                placeholder='e.g. "Factory found operating at 40% capacity", "Promoter has diversified into unrelated sectors"'
+                rows={2}
+                className="w-full px-3 py-2 text-sm border border-slate-200 bg-white rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-400 resize-none transition-all"
+              />
+            </div>
+          ))}
+          <p className="text-xs text-slate-400">
+            These qualitative notes will be factored into the AI risk assessment and included in the CAM report.
+          </p>
+        </div>
       </div>
 
       {/* Run button */}
       <div className="flex items-center justify-between">
         <div className="text-xs text-slate-500">
           {uploadCount > 0 ? (
-            <span className="flex items-center gap-1 text-green-600 font-medium"><CheckCircle size={13} />{uploadCount} document{uploadCount > 1 ? 's' : ''} ready</span>
+            <span className="flex items-center gap-1 text-blue-600 font-medium"><CheckCircle size={13} />{uploadCount} document{uploadCount !== 1 ? 's' : ''} ready</span>
           ) : (
             <span>No documents uploaded yet</span>
           )}

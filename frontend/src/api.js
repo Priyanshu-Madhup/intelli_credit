@@ -50,6 +50,23 @@ export async function runAssessment(companyName, sector, requestedLoanCr) {
 }
 
 /**
+ * Extract form fields from uploaded/indexed documents via RAG + LLM.
+ * Calls POST /assess/extract-form
+ * @returns {Promise<Object>} - extracted form field values
+ */
+export async function extractFormFields() {
+  const res = await fetch(`${BASE_URL}/assess/extract-form`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'Form extraction failed');
+  }
+  return res.json();
+}
+
+/**
  * Fetch financial chart data from indexed documents.
  * Calls POST /charts/financial
  * @param {string} companyName - optional company name for targeted queries
@@ -69,6 +86,23 @@ export async function fetchChartData(companyName = '') {
 }
 
 /**
+ * Fetch all document insight categories in one shot.
+ * Calls POST /query/doc-insights → single FAISS query + single LLM call.
+ * @returns {Promise<Object>} - { insights: [{category, icon, summary, severity}] }
+ */
+export async function fetchDocInsights() {
+  const res = await fetch(`${BASE_URL}/query/doc-insights`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'Doc insights failed');
+  }
+  return res.json();
+}
+
+/**
  * Ask a question about the indexed documents.
  * Calls POST /query
  * @param {string} question
@@ -83,6 +117,65 @@ export async function queryDocuments(question) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || 'Query failed');
+  }
+  return res.json();
+}
+
+/**
+ * Run full secondary web research for a company.
+ * Calls POST /research/full
+ */
+export async function runFullResearch(companyName, sector = '', promoterName = '') {
+  const res = await fetch(`${BASE_URL}/research/full`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      company_name: companyName,
+      sector,
+      promoter_name: promoterName || null,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'Research failed');
+  }
+  return res.json();
+}
+
+/**
+ * Run a custom web search query.
+ * Calls POST /research/custom
+ */
+export async function customWebSearch(query, num = 10, searchType = 'search') {
+  const res = await fetch(`${BASE_URL}/research/custom`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, num, search_type: searchType }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'Search failed');
+  }
+  return res.json();
+}
+
+/**
+ * Synthesize web research into AI risk insights.
+ * Calls POST /research/synthesize
+ */
+export async function synthesizeResearch(companyName, sector, researchResults) {
+  const res = await fetch(`${BASE_URL}/research/synthesize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      company_name: companyName,
+      sector,
+      research_results: researchResults,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'Synthesis failed');
   }
   return res.json();
 }
