@@ -10,9 +10,6 @@ load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Pre-load the embedding model at startup so first request is fast
-    from services.document_processor import _get_embedding_model
-    _get_embedding_model()
     yield
 
 
@@ -46,5 +43,4 @@ def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
