@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Bell, Settings, HelpCircle, ChevronDown } from 'lucide-react';
+import { Search, Bell, Settings, HelpCircle, ChevronDown, LogOut } from 'lucide-react';
 
 const pageTitles = {
   dashboard:      { title: 'Dashboard',               subtitle: 'Credit portfolio overview' },
@@ -10,9 +10,13 @@ const pageTitles = {
   report:         { title: 'CAM Report',              subtitle: 'Credit Appraisal Memorandum preview' },
 };
 
-export default function TopNav({ currentPage }) {
+export default function TopNav({ currentPage, user, onLogout }) {
   const { title, subtitle } = pageTitles[currentPage] || pageTitles.dashboard;
   const [query, setQuery] = useState('');
+
+  const initials = user?.name
+    ? user.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+    : 'U';
 
   return (
     <header className="bg-white border-b border-slate-100 px-6 py-3.5 flex items-center justify-between sticky top-0 z-40 shadow-sm">
@@ -49,16 +53,27 @@ export default function TopNav({ currentPage }) {
         </button>
 
         {/* Profile */}
-        <div className="flex items-center gap-2 pl-3 border-l border-slate-200 cursor-pointer group">
+        <div className="flex items-center gap-2 pl-3 border-l border-slate-200">
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-indigo-600 flex items-center justify-center flex-shrink-0">
-            <span className="text-white text-[11px] font-bold">AK</span>
+            <span className="text-white text-[11px] font-bold">{initials}</span>
           </div>
           <div className="hidden lg:block">
-            <p className="text-slate-800 text-[13px] font-semibold leading-none">Arjun Kumar</p>
-            <p className="text-slate-400 text-[11px] mt-0.5">Credit Analyst</p>
+            <p className="text-slate-800 text-[13px] font-semibold leading-none">{user?.name || 'User'}</p>
+            <p className="text-slate-400 text-[11px] mt-0.5">{user?.email || ''}</p>
           </div>
           <ChevronDown size={14} className="text-slate-400 hidden lg:block" />
         </div>
+
+        {/* Logout */}
+        {onLogout && (
+          <button
+            onClick={onLogout}
+            title="Sign out"
+            className="p-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+          >
+            <LogOut size={18} />
+          </button>
+        )}
       </div>
     </header>
   );
