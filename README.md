@@ -1,62 +1,125 @@
 # IntelliCredit — AI-Powered Corporate Credit Appraisal Engine
 
-> Built for the **"Intelli-Credit" Hackathon Challenge**
+> **IIT Hyderabad Hackathon — Intelli-Credit Challenge**
 > Theme: *Next-Gen Corporate Credit Appraisal: Bridging the Intelligence Gap*
 
 ---
 
-## Problem Statement
+## Overview
 
-Indian corporate lending faces a **Data Paradox** — more information than ever, yet credit managers take weeks to process a single loan application. Assessing the creditworthiness of a mid-sized Indian corporate means stitching together:
-
-| Data Type | Examples |
-|---|---|
-| **Structured** | GST filings, ITRs, Bank Statements |
-| **Unstructured** | Annual Reports, Board minutes, Rating agency reports, Shareholding patterns |
-| **External Intelligence** | Sector news, MCA filings, e-Courts litigation data |
-| **Primary Insights** | Factory site visits, Management interviews (Due Diligence) |
-
-The current manual process is **slow, prone to human bias, and misses early warning signals** buried in unstructured text.
+**IntelliCredit** is an end-to-end AI credit decisioning engine that automates the preparation of a **Comprehensive Credit Appraisal Memo (CAM)** for mid-sized Indian corporates. It ingests multi-format financial documents, runs a full RAG-powered analysis pipeline, performs real-time web research, and produces an explainable credit decision — all in minutes instead of weeks.
 
 ---
 
-## Solution: IntelliCredit
+## Key Features
 
-An end-to-end AI Credit Decisioning Engine that automates the preparation of a **Comprehensive Credit Appraisal Memo (CAM)** across three pillars:
+### Document Intelligence Pipeline
+- **Multi-Format Ingestion** — PDF (annual reports, legal notices, sanction letters) and Excel (ALM statements, portfolio cuts) via PyMuPDF + openpyxl + reportlab
+- **LLM Auto-Classification** — Groq LLaMA 3.3-70b automatically identifies document types (Annual Report, GST Returns, Borrowing Profile, Shareholding Pattern, Bank Statement, ALM) before indexing
+- **Dynamic Semantic Chunking** — LLM-driven section boundary detection instead of fixed-size token splits; preserves financial context across tables, footnotes, and multi-page disclosures
+- **Token-Aware Batching** — tiktoken-based token counting with configurable `TOKEN_THRESHOLD` prevents context overflow during chunking LLM calls
+- **SentenceTransformer Embeddings** — `all-MiniLM-L6-v2` encodes every semantic chunk into 384-dim dense vectors
+- **FAISS Vector Store** — In-memory flat L2 index with persistent `faiss_index.bin` + `faiss_metadata.json` for sub-millisecond nearest-neighbor retrieval
 
-### 1. Data Ingestor — Multi-Format Document Pipeline
-- **Unstructured Parsing**: Extracts key financial commitments and risks from PDF annual reports, legal notices, and sanction letters using PyMuPDF + LLaMA 3.3 (Groq)
-- **Dynamic Semantic Chunking**: LLM-driven section identification (not fixed-size splits) for meaningful financial context
-- **Embedding & Vector Storage**: SentenceTransformers (`all-MiniLM-L6-v2`) + FAISS for fast semantic retrieval
-- **Structured Cross-Validation**: GST returns vs. bank statements reconciliation to flag circular trading or revenue inflation
+### RAG Pipeline (Retrieval-Augmented Generation)
+- **Dynamic top-k Retrieval** — Query complexity detection boosts `top_k` up to 15× for broad financial questions; standard queries use baseline `k=5`
+- **3× Over-Fetch + Score Filtering** — Fetches 3× candidates before re-ranking by cosine similarity so the final context is always the most relevant
+- **Token-Budget Context Packing** — Retrieved chunks are truncated to a strict `_MAX_CONTEXT = 3500` token window, keeping every Groq call within the 128k context limit
+- **Grounded Document Q&A** — Natural-language queries over indexed documents: *"What is the DSCR?"*, *"Are there any litigation risks?"* — answers cite evidence from actual uploaded financials
+- **Form Field Auto-Extraction** — `/assess/extract-form` uses RAG to auto-populate revenue, debt, profit, and GSTIN fields from indexed documents
 
-### 2. Research Agent — The Digital Credit Manager
-- **RAG Pipeline**: Retrieves relevant document context and grounds Groq LLM answers in actual uploaded financials
-- **Primary Insight Portal**: Credit officers can input qualitative observations (e.g., *"Factory found operating at 40% capacity"*) — the AI adjusts risk scores accordingly
-- **Risk Alert Generation**: Automatically surfaces litigation risk, GST mismatches, sector headwinds, and delayed filings
+### Web Search & Secondary Research
+- **Serper API Integration** — Parallel Google web + news searches across six research dimensions: company news, financial intelligence, litigation & regulatory filings, MCA records, promoter background, and sector trends
+- **AI Research Synthesis** — Groq LLM synthesizes raw web results into structured risk insights with severity ratings (High / Medium / Low) and actionable summaries
+- **Custom Search** — Analysts can run free-form web queries from the Research Insights panel
+- **Real-Time Intelligence** — Surfaces delayed GST filings, court judgements, SEBI actions, RBI penalties, and sector headwinds from live web data
 
-### 3. Recommendation Engine — CAM Generator
-- **Structured Credit Decision**: Produces risk score (0–100), loan recommendation, interest rate, tenor, and loan conditions
-- **Score Breakdown**: Transparent scoring across five dimensions — Financial Health, Repayment History, Collateral Coverage, Management Quality, Market Position
-- **Explainable AI**: Full reasoning narrative explaining *why* a specific limit or rejection was recommended
-- **Indian Context Sensitivity**: Understands GSTR-2A vs 3B, CIBIL Commercial reports, RBI norms, and MCA filings
+### Credit Assessment Engine
+- **Structured Credit Scoring** — Composite risk score (0–100) across five weighted dimensions: Financial Health (30%), Repayment History (25%), Collateral Coverage (20%), Management Quality (15%), Market Position (10%)
+- **Multi-Query RAG Context** — Four targeted FAISS queries per assessment dimension ensure the LLM has relevant evidence for every scoring factor
+- **Explainable AI Decisions** — Full 3–4 paragraph AI reasoning narrative describes *why* a specific loan amount, rate, and tenor were recommended
+- **Loan Conditions & Covenants** — Auto-generates specific monitoring requirements and conditions precedent attached to each sanction
+- **Risk Alert Generation** — Automatically flags High Debt Ratio, GST mismatches, litigation exposure, NPA indicators, and sector-specific headwinds
+
+### SWOT Analysis
+- **RAG-Powered SWOT** — Multi-query retrieval across financial, management, market, and compliance dimensions feeds a structured Strengths / Weaknesses / Opportunities / Threats analysis
+- **Sector-Aware Reasoning** — LLM applies sector-specific knowledge (manufacturing capex, pharma regulatory risk, infrastructure project risk) to SWOT items
+
+### GST Cross-Validation
+- **GSTR-2A vs 3B Reconciliation** — Compares reported turnover across GST returns and bank statements to flag circular trading, revenue inflation, and ITC mismatch
+- **Indian Compliance Context** — Prompts explicitly reference GSTIN, GSTR-2A/3B, e-Way bills, and RBI/MCA norms
+
+### CAM Report Generation
+- **Full Credit Appraisal Memo** — AI-generated expandable memo with Company Overview, Financial Analysis, Risk Assessment (5Cs of Credit), Credit Decision, and Compliance & Due Diligence sections
+- **PDF Export** — One-click PDF generation via jsPDF with professional A4 layout, color-coded risk indicators, and bank-ready formatting
+- **DOCX Export** — Downloadable Word document for further editing by the credit team
+
+### Primary Insight Portal
+- **Qualitative Due Diligence Input** — Credit officers enter factory/site visit observations, management interview notes, market/supplier feedback, and operational findings
+- **AI Score Adjustment** — Primary insights are embedded into the assessment context so the LLM adjusts risk scores for on-ground findings (e.g., *"Factory operating at 40% capacity"*)
+
+### Portfolio Dashboard
+- **Credit History Tracking** — Persisted assessment history with risk-banded bar charts (last 8 assessments) and real-time risk distribution pie chart
+- **Portfolio Stats** — Total assessments, High/Medium/Low risk counts with drill-down company table
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        React Frontend                        │
+│  Dashboard · New Assessment · AI Analysis · CAM Report       │
+│  Credit Recommendation · Research Insights · SWOT · GST     │
+└────────────────────────┬────────────────────────────────────┘
+                         │  REST API (FastAPI)
+┌────────────────────────▼────────────────────────────────────┐
+│                       FastAPI Backend                        │
+│                                                              │
+│  /documents   → PyMuPDF extraction → Dynamic chunking       │
+│               → SentenceTransformer embeds → FAISS index    │
+│                                                              │
+│  /query       → RAG retrieve (FAISS) → Groq LLM answer      │
+│                                                              │
+│  /assess      → Multi-query RAG → credit_scorer → JSON      │
+│                                                              │
+│  /research    → Serper web search → Groq synthesis          │
+│                                                              │
+│  /swot        → RAG retrieval → SWOT structured output      │
+│                                                              │
+│  /gst         → GST cross-validation → mismatch alerts      │
+│                                                              │
+│  /cam         → Full CAM memo generation → PDF/DOCX export  │
+└──────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Tech Stack
 
 ### Frontend
-- **React 19** + Tailwind CSS
-- Recharts for financial visualizations
-- Lucide React icons
+| Technology | Purpose |
+|---|---|
+| **React 19** | UI framework |
+| **Tailwind CSS** | Utility-first styling |
+| **Recharts** | Financial bar charts, radar charts, pie charts |
+| **jsPDF** | Client-side PDF CAM export |
+| **Lucide React** | Icon library |
+| **Supabase** | Authentication |
 
 ### Backend
-- **FastAPI** (Python)
-- **Groq API** — LLaMA 3.3-70b-Versatile for dynamic chunking, RAG answering, and credit scoring
-- **PyMuPDF** — PDF text extraction
-- **SentenceTransformers** — `all-MiniLM-L6-v2` embeddings
-- **FAISS** — Vector similarity search
-- **tiktoken** — Token counting (LLaMA-compatible)
+| Technology | Purpose |
+|---|---|
+| **FastAPI** | REST API framework with async support |
+| **Groq API — LLaMA 3.3-70b-Versatile** | Dynamic chunking, RAG answering, credit scoring, SWOT, GST validation |
+| **PyMuPDF (fitz)** | PDF text extraction, page-level text blocks |
+| **SentenceTransformers** | `all-MiniLM-L6-v2` — 384-dim semantic embeddings |
+| **FAISS (faiss-cpu)** | In-memory vector similarity search index |
+| **tiktoken** | Token counting (cl100k_base ≈ LLaMA tokenizer) |
+| **Serper API** | Google web + news search for secondary research |
+| **openpyxl + reportlab** | Excel ingestion → PDF conversion pipeline |
+| **python-docx** | DOCX CAM report generation |
+| **python-dotenv** | Environment variable management |
 
 ---
 
@@ -64,36 +127,46 @@ An end-to-end AI Credit Decisioning Engine that automates the preparation of a *
 
 ```
 intelli_credit/
-├── screenshots/            # UI screenshots for README
+├── images/                 # Product screenshots (ss1–ss7)
 ├── frontend/               # React application
-│   ├── src/
-│   │   ├── api.js          # API client (upload, assess, query, charts)
-│   │   ├── pages/
-│   │   │   ├── NewCreditAssessment.jsx   # Upload docs + trigger pipeline
-│   │   │   ├── AIAnalysis.jsx            # Financial analysis + risk gauge
-│   │   │   ├── CreditRecommendation.jsx  # Final credit decision + RadarChart
-│   │   │   ├── CAMReport.jsx             # Credit Appraisal Memo
-│   │   │   ├── ResearchInsights.jsx      # Secondary research panel
-│   │   │   └── Dashboard.jsx             # Overview dashboard
-│   │   └── components/
-│   │       ├── Sidebar.jsx
-│   │       └── TopNav.jsx
-│   └── package.json
+│   └── src/
+│       ├── api.js                        # API client — upload, assess, RAG query, charts, research
+│       ├── supabase.js                   # Supabase auth client
+│       ├── pages/
+│       │   ├── Dashboard.jsx             # Portfolio overview + risk distribution charts
+│       │   ├── NewCreditAssessment.jsx   # Document upload + dynamic chunking pipeline trigger
+│       │   ├── AIAnalysis.jsx            # Risk gauge + financial KPI cards + alert panel
+│       │   ├── CreditRecommendation.jsx  # Final decision + RadarChart score breakdown
+│       │   ├── CAMReport.jsx             # Full CAM memo + PDF/DOCX export
+│       │   ├── ResearchInsights.jsx      # RAG Q&A panel + web research synthesis
+│       │   ├── SWOTAnalysis.jsx          # AI-generated SWOT grid
+│       │   ├── GSTCrossValidation.jsx    # GST vs. bank statement reconciliation
+│       │   ├── DocQuery.jsx              # Free-form document query (RAG)
+│       │   └── AuthPage.jsx              # Supabase login / register
+│       └── components/
+│           ├── Sidebar.jsx               # Navigation rail
+│           └── TopNav.jsx                # Top bar with company context
 │
 └── backend/                # FastAPI application
-    ├── main.py             # App entry point + CORS
+    ├── main.py              # App entry point + CORS + lifespan (embedding model preload)
     ├── requirements.txt
-    ├── .env                # API keys & config (not committed)
+    ├── .env                 # GROQ_API_KEY, SERPER_API_KEY, config (not committed)
     ├── routers/
-    │   ├── documents.py    # POST /documents/process
-    │   ├── query.py        # POST /query
-    │   ├── assess.py       # POST /assess
-    │   └── charts.py       # POST /charts/financial
+    │   ├── documents.py     # POST /documents/classify, /documents/process
+    │   ├── query.py         # POST /query  (RAG document Q&A)
+    │   ├── assess.py        # POST /assess, /assess/extract-form
+    │   ├── charts.py        # POST /charts/financial
+    │   ├── research.py      # POST /research/full, /research/custom, /research/synthesize
+    │   ├── cam.py           # POST /cam/generate, /cam/docx
+    │   ├── gst_validate.py  # POST /gst/validate
+    │   └── swot.py          # POST /swot/generate
     └── services/
-        ├── document_processor.py  # Extract → Chunk → Embed → FAISS
-        ├── rag_service.py         # Retrieve → Answer via Groq + get_all_chunks
-        ├── credit_scorer.py       # Full structured credit assessment
-        └── chart_service.py       # Financial chart data extraction
+        ├── document_processor.py  # Extract → Dynamic chunk → Embed → FAISS
+        ├── rag_service.py         # Dynamic top-k retrieval + token-budget context packing
+        ├── credit_scorer.py       # Multi-query RAG → structured credit JSON via Groq
+        ├── chart_service.py       # Financial chart data extraction from indexed docs
+        ├── web_search_service.py  # Serper API — 6-dimension secondary research
+        └── groq_retry.py          # Exponential backoff retry wrapper for Groq API calls
 ```
 
 ---
@@ -102,10 +175,19 @@ intelli_credit/
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/documents/process` | Upload a PDF and run the full ingestion pipeline |
-| `POST` | `/query` | Ask a natural-language question about the indexed document |
-| `POST` | `/assess` | Run a full AI credit assessment for a company |
-| `POST` | `/charts/financial` | Extract financial chart data (revenue, profit, debt trends) |
+| `POST` | `/documents/classify` | Extract text + LLM-classify document type (no indexing) |
+| `POST` | `/documents/process` | Full ingestion: PDF/Excel → dynamic chunking → FAISS index |
+| `POST` | `/query` | RAG Q&A — natural-language question over indexed documents |
+| `POST` | `/assess` | Full credit assessment: multi-query RAG + LLM scoring |
+| `POST` | `/assess/extract-form` | Auto-extract form fields from indexed documents via RAG |
+| `POST` | `/charts/financial` | Extract yearly revenue / profit / debt trends for charts |
+| `POST` | `/research/full` | 6-dimension Serper web research for a company |
+| `POST` | `/research/custom` | Free-form web or news search |
+| `POST` | `/research/synthesize` | Groq synthesis of web research into risk insights |
+| `POST` | `/swot/generate` | RAG-powered SWOT analysis |
+| `POST` | `/gst/validate` | GST cross-validation and reconciliation |
+| `POST` | `/cam/generate` | Full CAM memo generation |
+| `POST` | `/cam/docx` | Download CAM as DOCX |
 | `GET`  | `/health` | Liveness probe |
 
 ---
@@ -115,18 +197,34 @@ intelli_credit/
 ### Prerequisites
 - Python 3.10+
 - Node.js 18+
-- A [Groq API key](https://console.groq.com)
+- [Groq API key](https://console.groq.com) — LLaMA 3.3-70b inference
+- [Serper API key](https://serper.dev) — Google web search (for Research Insights)
 
-### Backend
+### Backend Setup
 
 ```bash
 cd backend
 pip install -r requirements.txt
-# Set your GROQ_API_KEY in .env
+```
+
+Create a `.env` file in `backend/`:
+
+```env
+GROQ_API_KEY=your_groq_api_key
+SERPER_API_KEY=your_serper_api_key
+FAISS_INDEX_PATH=faiss_index.bin
+FAISS_METADATA_PATH=faiss_metadata.json
+TOKEN_THRESHOLD=2000
+EMBEDDING_MODEL=all-MiniLM-L6-v2
+GROQ_MODEL=llama-3.3-70b-versatile
+ALLOWED_ORIGINS=http://localhost:3000
+```
+
+```bash
 uvicorn main:app --reload --port 8000
 ```
 
-### Frontend
+### Frontend Setup
 
 ```bash
 cd frontend
@@ -136,75 +234,119 @@ npm start
 
 The app runs at `http://localhost:3000` and connects to the backend at `http://localhost:8000`.
 
+Set `REACT_APP_API_URL` in `frontend/.env` to point to a deployed backend.
+
 ---
 
 ## Screenshots
 
-> Add your screenshots to the `screenshots/` folder and they will render here.
-
-### Dashboard
-![Dashboard](screenshots/dashboard.png)
-The main overview screen showing **Credit Score History** (bar chart of the last 8 assessments color-coded by risk level), **Risk Distribution** (pie chart dynamically computed from past assessments — Low / Medium / High), portfolio summary cards (Total Portfolio, Avg Risk Score, High Risk Count, Pending Reviews), and a live table of recently assessed companies.
+### Dashboard — Portfolio Overview
+![Dashboard](images/ss1.png)
+Credit portfolio overview with **Risk Score History** bar chart (last 8 assessments, color-coded Low/Medium/High), **Risk Distribution** pie chart, and assessment stats cards (Total Assessments, High Risk, Medium Risk, Low Risk). Start a new assessment directly from the dashboard.
 
 ---
 
-### New Credit Assessment
-![New Credit Assessment](screenshots/new_assessment.png)
-The intake form where a credit analyst uploads financial documents (PDF / DOCX) for a company. Supports drag-and-drop upload, auto-detects the company name from the document, shows an upload progress bar, and triggers the full backend pipeline (text extraction → semantic chunking → FAISS indexing → AI credit scoring) on submission.
+### New Credit Assessment — Document Upload & Pipeline Trigger
+![New Credit Assessment](images/ss2.png)
+Multi-document intake form with drag-and-drop file upload for Annual Reports, ALM Statements, Shareholding Patterns, Borrowing Profiles, and Portfolio data (PDF/Excel). LLM auto-classifies each uploaded document before indexing. Supports primary due diligence notes (factory visits, management interviews, market feedback). Triggers the full pipeline: text extraction → dynamic semantic chunking → FAISS vector indexing → AI credit scoring.
 
 ---
 
-### AI Analysis
-![AI Analysis](screenshots/ai_analysis.png)
-Deep-dive financial intelligence screen with:
-- **Financial Overview cards** — Annual Revenue, Net Profit, Total Debt, GST Turnover (pulled from the uploaded document via the `/charts/financial` endpoint)
-- **Yearly Financial Trend** — grouped bar chart showing Revenue, Profit, and Debt (₹ Cr) across fiscal years
-- **Risk Score Gauge** — custom semi-circle gauge showing the composite AI risk score (0–100) with Low / Medium / High bands
-- **Risk Alerts** — auto-generated cards highlighting High Debt Ratio, Market Risk, payment history concerns, and sector headwinds
-- **Profitability KPI cards** — Gross Margin, Net Margin, ROE, Current Ratio, Debt/Equity, Interest Coverage with health indicators
-- **"Fetch from Docs"** button to re-query the vector database for the latest extracted financials
+### AI Analysis — Risk Gauge & Financial Intelligence
+![AI Analysis](images/ss3.png)
+Deep-dive financial intelligence screen featuring a custom **SVG Risk Score Gauge** (0–100, Low/Medium/High bands), **Financial Overview KPI cards** (Annual Revenue, Net Profit, Total Debt, GST Turnover extracted via RAG), **Yearly Financial Trend** grouped bar chart (Revenue / Profit / Debt in ₹ Cr), and auto-generated **Risk Alert cards** with High/Medium/Low severity indicators. Profitability metrics include Gross Margin, Net Margin, ROE, DSCR, D/E Ratio, and Interest Coverage.
 
 ---
 
-### Credit Recommendation
-![Credit Recommendation](screenshots/credit_recommendation.png)
-The final credit decision screen showing:
-- **Recommendation badge** — Approve / Conditional Approval / Reject with recommended loan amount and interest rate
-- **Score Breakdown RadarChart** — pentagon radar across Financial Health, Repayment History, Collateral, Management Quality, and Market Position
-- **Weighted score bars** for each dimension with percentage contribution
-- **AI Reasoning narrative** — plain-English explanation of why the decision was reached
-- **Loan conditions** — specific covenants and monitoring requirements attached to the sanction
+### Credit Recommendation — Explainable Credit Decision
+![Credit Recommendation](images/ss4.png)
+Final credit decision with **Approve / Conditional Approval / Reject** badge, recommended loan amount and interest rate. **Score Breakdown RadarChart** (pentagon across 5 dimensions with weighted score bars) and full **AI Reasoning narrative** explaining the decision. Lists specific loan conditions and covenants attached to the sanction.
 
 ---
 
-### CAM Report
-![CAM Report](screenshots/cam_report.png)
-The full **Comprehensive Credit Appraisal Memo** generated by the AI, broken into expandable accordion sections:
-- Executive Summary (company profile, promoter background, loan purpose)
-- Financial Analysis (trend analysis, ratio analysis, DER, DSCR)
-- Risk Assessment (industry risk, management risk, financial risk, mitigation factors)
-- Credit Decision (recommendation, loan structure, collateral, conditions precedent)
-- Compliance & Due Diligence checklist
+### CAM Report — Comprehensive Credit Appraisal Memo
+![CAM Report](images/ss5.png)
+AI-generated **Credit Appraisal Memo** in expandable accordion sections: Company Overview, Financial Analysis (ratio analysis, trend analysis, DSCR, DER), 5Cs of Credit (Character, Capacity, Capital, Collateral, Conditions), Risk Assessment, and Credit Decision. Supports **one-click PDF export** (jsPDF) and **DOCX download** for bank-ready document formatting.
 
 ---
 
-### Research Insights
-![Research Insights](screenshots/research_insights.png)
-The RAG-powered research panel where analysts can **ask natural-language questions** about the uploaded document (e.g. *"What is the company's current ratio?"* or *"Are there any pending litigation risks?"*). Returns grounded answers with evidence from the indexed document chunks. Also allows entry of **primary qualitative observations** (e.g. factory visit notes) that the AI factors into the risk score.
+### Research Insights — RAG Q&A + Web Intelligence
+![Research Insights](images/ss6.png)
+Dual-mode research panel. **Document Q&A (RAG)**: ask natural-language questions over indexed documents — answers are grounded in retrieved FAISS chunks with evidence citations. **Secondary Web Research**: Serper-powered search across 6 dimensions (company news, financials, litigation, MCA filings, promoter background, sector trends) synthesized by Groq into structured risk insights with severity ratings.
 
 ---
 
-## Evaluation Alignment
-
-| Criterion | How IntelliCredit addresses it |
-|---|---|
-| **Extraction Accuracy** | PyMuPDF + LLM-driven semantic chunking preserves financial context from messy Indian PDFs |
-| **Research Depth** | RAG pipeline retrieves grounded evidence; alerts surface litigation, GST mismatches, and sector trends |
-| **Explainability** | Every decision includes a full reasoning narrative and weighted score breakdown — no black box |
-| **Indian Context Sensitivity** | Prompts explicitly reference GSTR-2A/3B, CIBIL, MCA filings, RBI norms, and Indian rupee denominators |
+### SWOT Analysis & GST Cross-Validation
+![SWOT & GST](images/ss7.png)
+**SWOT Analysis**: RAG-powered Strengths / Weaknesses / Opportunities / Threats grid generated from indexed document context with sector-aware LLM reasoning. **GST Cross-Validation**: GSTR-2A vs 3B reconciliation flagging turnover mismatches, ITC discrepancies, circular trading indicators, and compliance gaps against RBI/MCA norms.
 
 ---
 
-## Built for
+## How It Works — Pipeline Deep Dive
 
-**IIT Hyderabad Hackathon — Intelli-Credit Challenge**
+### 1. Document Ingestion
+```
+PDF/Excel Upload
+    → PyMuPDF text extraction (page-level blocks)
+    → LLM Auto-Classification (Groq — one-shot, 20 tokens)
+    → Token counting (tiktoken cl100k_base)
+    → Dynamic Semantic Chunking
+         ├─ If tokens ≤ TOKEN_THRESHOLD → single chunk
+         └─ Else → LLM identifies section boundaries → split at headings
+    → SentenceTransformer encode (all-MiniLM-L6-v2 → 384-dim)
+    → FAISS flat index add + metadata persist
+```
+
+### 2. RAG Query
+```
+User Question
+    → SentenceTransformer encode query
+    → FAISS search (3× over-fetch, dynamic top-k up to 15)
+    → Re-rank by cosine similarity
+    → Token-budget packing (≤ 3500 tokens context)
+    → Groq LLM (LLaMA 3.3-70b) — grounded answer with citations
+```
+
+### 3. Credit Assessment
+```
+Company Name + Sector + Loan Amount
+    → 4 targeted FAISS queries (financial, debt, compliance, management)
+    → Multi-chunk context assembly with token-budget enforcement
+    → Groq LLM → structured JSON credit decision
+         ├─ risk_score (0–100)
+         ├─ decision (approved / conditional / rejected)
+         ├─ recommended_loan_cr + interest_rate_pct + tenor_months
+         ├─ score_breakdown (5 weighted dimensions)
+         ├─ conditions + risk_alerts
+         ├─ financial_overview + yearly_trend
+         └─ reasoning (3–4 paragraph narrative)
+```
+
+### 4. Secondary Research
+```
+Company Name + Sector
+    → Serper API — 6 parallel search dimensions
+         ├─ Company news (Google News)
+         ├─ Financial intelligence
+         ├─ Litigation & court records
+         ├─ MCA / regulatory filings
+         ├─ Promoter background
+         └─ Sector trends
+    → Groq LLM synthesis → structured risk insights + severity ratings
+```
+
+---
+
+## Environment Variables
+
+| Variable | Description | Default |
+|---|---|---|
+| `GROQ_API_KEY` | Groq API key for LLaMA 3.3-70b | required |
+| `SERPER_API_KEY` | Serper API key for web search | required for research |
+| `GROQ_MODEL` | Groq model name | `llama-3.3-70b-versatile` |
+| `EMBEDDING_MODEL` | SentenceTransformer model | `all-MiniLM-L6-v2` |
+| `FAISS_INDEX_PATH` | Path for persisted FAISS index | `faiss_index.bin` |
+| `FAISS_METADATA_PATH` | Path for chunk metadata JSON | `faiss_metadata.json` |
+| `TOKEN_THRESHOLD` | Max tokens before chunking kicks in | `2000` |
+| `ALLOWED_ORIGINS` | CORS origins (comma-separated) | `http://localhost:3000` |
+| `RAG_TOP_K` | Base number of chunks to retrieve | `5` |
