@@ -9,11 +9,11 @@ const sectors = ['Technology', 'Manufacturing', 'Agriculture', 'Pharma', 'Constr
 const locations = ['Mumbai', 'Delhi', 'Bengaluru', 'Chennai', 'Hyderabad', 'Pune', 'Ahmedabad', 'Kolkata', 'Jaipur', 'Surat'];
 
 const docTypes = [
-  { id: 'gst',    label: 'GST Returns',     icon: '📊', desc: 'GST returns for last 3 years',       accept: '.pdf,.xlsx' },
-  { id: 'bank',   label: 'Bank Statements', icon: '🏦', desc: 'Bank statements for last 24 months',  accept: '.pdf' },
-  { id: 'annual', label: 'Annual Reports',  icon: '📑', desc: 'Audited annual reports (3 years)',     accept: '.pdf' },
-  { id: 'rating', label: 'Rating Reports',  icon: '⭐', desc: 'Credit rating agency reports',         accept: '.pdf' },
-  { id: 'legal',  label: 'Legal Notices',   icon: '⚖️', desc: 'Any legal notices / court orders',    accept: '.pdf,.docx' },
+  { id: 'alm',          label: 'ALM (Asset-Liability Management)',       icon: '⚖️', desc: 'Asset-liability management / liquidity statements', accept: '.pdf' },
+  { id: 'shareholding', label: 'Shareholding Pattern',                   icon: '📋', desc: 'Shareholding structure and ownership details',        accept: '.pdf' },
+  { id: 'borrowing',    label: 'Borrowing Profile',                      icon: '🏦', desc: 'Existing borrowings, lenders and repayment schedule', accept: '.pdf' },
+  { id: 'annual',       label: 'Annual Reports (P&L, Cashflow, B/S)',    icon: '📑', desc: 'Audited P&L, cash flow and balance sheet (3 years)',  accept: '.pdf' },
+  { id: 'portfolio',    label: 'Portfolio Cuts / Performance Data',      icon: '📊', desc: 'Loan portfolio cuts and performance metrics',          accept: '.pdf,.xlsx' },
 ];
 
 function FileUploadCard({ doc, file, onUpload, onRemove, dragActive, onDragEnter, onDragLeave, onDrop, isUploading, isProcessed, uploadError }) {
@@ -82,6 +82,8 @@ export default function NewCreditAssessment({ onNavigate }) {
   const [files, setFiles] = useState({});
   const [processedFiles, setProcessedFiles] = useState({});  // track which files are processed in vector DB
   const [uploading, setUploading] = useState({});  // per-file upload status
+  // pendingClass: { [docId]: { file, detected_type, detected_label, all_types, selectedType } }
+  const [pendingClass, setPendingClass] = useState({});
   const [dragActive, setDragActive] = useState(null);
   const [running, setRunning] = useState(false);
   const [errors, setErrors] = useState({});
@@ -106,15 +108,69 @@ export default function NewCreditAssessment({ onNavigate }) {
     setForm(f => ({ ...f, [field]: value }));
   };
 
-  // Store the selected file locally; actual processing happens on Run
-  const handleFileUpload = (docId, file) => {
+  const BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+
+  // Step 1: classify the file; show confirmation banner before indexing
+  const handleFileUpload = async (docId, file) => {
     setFiles(prev => ({ ...prev, [docId]: file }));
     setErrors(prev => { const n = { ...prev }; delete n[`upload_${docId}`]; return n; });
+    setPendingClass(prev => { const n = { ...prev }; delete n[docId]; return n; });
+    setUploading(prev => ({ ...prev, [docId]: true }));
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch(`${BASE_URL}/documents/classify`, { method: 'POST', body: fd });
+      if (res.ok) {
+        const data = await res.json();
+        setPendingClass(prev => ({
+          ...prev,
+          [docId]: { file, ...data, selectedType: data.detected_type },
+        }));
+      } else {
+        // fallback: skip classify, go straight to indexing
+        setPendingClass(prev => ({
+          ...prev,
+          [docId]: { file, detected_type: 'general', detected_label: 'General Document', all_types: [], selectedType: 'general' },
+        }));
+      }
+    } catch (err) {
+      setErrors(prev => ({ ...prev, [`upload_${docId}`]: `Classification error: ${err.message}` }));
+    } finally {
+      setUploading(prev => { const n = { ...prev }; delete n[docId]; return n; });
+    }
+  };
+
+  // Step 2: user confirmed the doc type — index it
+  const confirmAndIndex = async (docId) => {
+    const pending = pendingClass[docId];
+    if (!pending) return;
+    setErrors(prev => { const n = { ...prev }; delete n[`upload_${docId}`]; return n; });
+    setUploading(prev => ({ ...prev, [docId]: true }));
+    try {
+      const fd = new FormData();
+      fd.append('file', pending.file);
+      fd.append('doc_type', pending.selectedType);
+      fd.append('append', 'false');
+      const res = await fetch(`${BASE_URL}/documents/process`, { method: 'POST', body: fd });
+      if (res.ok) {
+        const result = await res.json();
+        setProcessedFiles(prev => ({ ...prev, [docId]: result }));
+        setPendingClass(prev => { const n = { ...prev }; delete n[docId]; return n; });
+      } else {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        setErrors(prev => ({ ...prev, [`upload_${docId}`]: err.detail || 'Indexing failed' }));
+      }
+    } catch (err) {
+      setErrors(prev => ({ ...prev, [`upload_${docId}`]: `Indexing error: ${err.message}` }));
+    } finally {
+      setUploading(prev => { const n = { ...prev }; delete n[docId]; return n; });
+    }
   };
 
   const handleFileRemove = (docId) => {
     setFiles(prev => { const n = { ...prev }; delete n[docId]; return n; });
     setProcessedFiles(prev => { const n = { ...prev }; delete n[docId]; return n; });
+    setPendingClass(prev => { const n = { ...prev }; delete n[docId]; return n; });
     setErrors(prev => { const n = { ...prev }; delete n[`upload_${docId}`]; return n; });
   };
 
@@ -134,30 +190,6 @@ export default function NewCreditAssessment({ onNavigate }) {
     setRunning(true);
     setErrors({});
     try {
-      // Step 1: process uploaded documents into vector DB
-      if (Object.keys(files).length > 0) {
-        setRunStep('Processing documents into vector DB…');
-        for (const [docId, file] of Object.entries(files)) {
-          setUploading(prev => ({ ...prev, [docId]: true }));
-          try {
-            const formData = new FormData();
-            formData.append('file', file);
-            const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:8000'}/documents/process`, {
-              method: 'POST',
-              body: formData,
-            });
-            if (res.ok) {
-              const result = await res.json();
-              setProcessedFiles(prev => ({ ...prev, [docId]: result }));
-            }
-          } catch (_) {
-            // continue with remaining files
-          } finally {
-            setUploading(prev => { const n = { ...prev }; delete n[docId]; return n; });
-          }
-        }
-      }
-
       const companyName = form.name.trim();
       if (!companyName) {
         setErrors({ name: 'Company name is required.' });
@@ -167,7 +199,20 @@ export default function NewCreditAssessment({ onNavigate }) {
       // Step 2: run credit assessment
       setRunStep('Running AI credit assessment…');
       const loanCr = parseFloat(form.loan) || 5.0;
-      const assessment = await runAssessment(companyName, form.sector, loanCr);
+      // Send all filled form fields so backend can use them as context
+      // even when no documents have been uploaded
+      const extraFields = {};
+      const fieldMap = {
+        location: 'location', promoter_name: 'promoter_name',
+        incorporation_year: 'incorporation_year', gstin: 'gstin',
+        annual_revenue: 'annual_revenue', net_profit: 'net_profit',
+        total_debt: 'total_debt', employee_count: 'employee_count',
+        email: 'email',
+      };
+      Object.entries(fieldMap).forEach(([formKey, apiKey]) => {
+        if (form[formKey]?.trim()) extraFields[apiKey] = form[formKey].trim();
+      });
+      const assessment = await runAssessment(companyName, form.sector, loanCr, extraFields);
       // Persist for downstream pages
       localStorage.setItem('ic_assessment', JSON.stringify(assessment));
       localStorage.setItem('ic_company', JSON.stringify({ name: companyName, sector: form.sector, location: form.location }));
@@ -346,6 +391,66 @@ export default function NewCreditAssessment({ onNavigate }) {
             />
           ))}
         </div>
+
+        {/* Classification confirmation banners */}
+        {Object.entries(pendingClass).length > 0 && (
+          <div className="px-6 pb-4 space-y-3">
+            {Object.entries(pendingClass).map(([docId, cls]) => (
+              <div key={docId} className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <span className="text-sm">🔍</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-indigo-900 font-semibold text-xs mb-0.5">
+                      AI detected: <span className="text-indigo-700">{cls.detected_label}</span>
+                    </p>
+                    <p className="text-indigo-600 text-xs truncate mb-2">{cls.file.name}</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <label className="text-xs font-medium text-indigo-700 flex-shrink-0">Confirm type:</label>
+                      <select
+                        value={cls.selectedType}
+                        onChange={e => setPendingClass(prev => ({
+                          ...prev,
+                          [docId]: { ...prev[docId], selectedType: e.target.value },
+                        }))}
+                        className="text-xs border border-indigo-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-400/30 focus:border-indigo-400"
+                      >
+                        {(cls.all_types.length > 0 ? cls.all_types : [
+                          { value: 'annual', label: 'Annual Report' },
+                          { value: 'alm', label: 'ALM / Liquidity Statement' },
+                          { value: 'shareholding', label: 'Shareholding Pattern' },
+                          { value: 'borrowing', label: 'Borrowing Profile' },
+                          { value: 'portfolio', label: 'Loan Portfolio' },
+                          { value: 'gst', label: 'GST Returns' },
+                          { value: 'bank', label: 'Bank Statement' },
+                          { value: 'general', label: 'General Document' },
+                        ]).map(t => (
+                          <option key={t.value} value={t.value}>{t.label}</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => confirmAndIndex(docId)}
+                        disabled={!!uploading[docId]}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 rounded-lg transition-all"
+                      >
+                        {uploading[docId] ? <Loader size={11} className="animate-spin" /> : <CheckCircle size={11} />}
+                        {uploading[docId] ? 'Indexing…' : 'Confirm & Index'}
+                      </button>
+                      <button
+                        onClick={() => handleFileRemove(docId)}
+                        className="text-xs text-indigo-500 hover:text-red-500 transition-colors px-1"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {uploadCount === 0 && (
           <div className="mx-6 mb-6 p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-xs text-amber-700">
             <AlertCircle size={14} className="flex-shrink-0" />
@@ -463,21 +568,35 @@ export default function NewCreditAssessment({ onNavigate }) {
       {/* Run button */}
       <div className="flex items-center justify-between">
         <div className="text-xs text-slate-500">
-          {uploadCount > 0 ? (
-            <span className="flex items-center gap-1 text-blue-600 font-medium"><CheckCircle size={13} />{uploadCount} document{uploadCount !== 1 ? 's' : ''} ready</span>
+          {Object.keys(uploading).length > 0 ? (
+            <span className="flex items-center gap-1 text-blue-600 font-medium"><Loader size={13} className="animate-spin" />Indexing documents…</span>
+          ) : Object.keys(pendingClass).length > 0 ? (
+            <span className="flex items-center gap-1 text-indigo-600 font-medium"><AlertCircle size={13} />{Object.keys(pendingClass).length} document{Object.keys(pendingClass).length !== 1 ? 's' : ''} awaiting confirmation</span>
+          ) : uploadCount > 0 ? (
+            <span className="flex items-center gap-1 text-green-600 font-medium"><CheckCircle size={13} />{Object.keys(processedFiles).length}/{uploadCount} document{uploadCount !== 1 ? 's' : ''} indexed</span>
           ) : (
             <span>No documents uploaded yet</span>
           )}
         </div>
         <button
           onClick={handleRun}
-          disabled={running}
+          disabled={running || Object.keys(uploading).length > 0 || Object.keys(pendingClass).length > 0}
           className="flex items-center gap-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-slate-400 disabled:to-slate-500 text-white px-7 py-3 rounded-xl text-sm font-bold transition-all shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/30 hover:-translate-y-0.5 disabled:translate-y-0 disabled:shadow-none"
         >
           {running ? (
             <>
               <Loader size={16} className="animate-spin" />
               Running AI Analysis…
+            </>
+          ) : Object.keys(uploading).length > 0 ? (
+            <>
+              <Loader size={16} className="animate-spin" />
+              Indexing Documents…
+            </>
+          ) : Object.keys(pendingClass).length > 0 ? (
+            <>
+              <AlertCircle size={16} />
+              Confirm Documents First
             </>
           ) : (
             <>

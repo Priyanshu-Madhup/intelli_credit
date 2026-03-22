@@ -17,6 +17,16 @@ class AssessRequest(BaseModel):
     company_name: str
     sector: str
     requested_loan_cr: float = 5.0
+    # Optional form-level financial data — used as fallback context when no documents are indexed
+    location:          Optional[str] = None
+    promoter_name:     Optional[str] = None
+    incorporation_year:Optional[str] = None
+    gstin:             Optional[str] = None
+    annual_revenue:    Optional[str] = None
+    net_profit:        Optional[str] = None
+    total_debt:        Optional[str] = None
+    employee_count:    Optional[str] = None
+    email:             Optional[str] = None
 
 
 @router.post("")
@@ -27,9 +37,27 @@ def assess_credit(req: AssessRequest):
     Retrieves relevant context from the indexed FAISS store and asks Groq
     to produce a structured credit decision including risk score, loan
     recommendation, score breakdown, conditions, and risk alerts.
+    If no documents are indexed the manually supplied form fields are used
+    as the context so the assessment still runs.
     """
+    form_data = {
+        k: v for k, v in {
+            "location":           req.location,
+            "promoter_name":      req.promoter_name,
+            "incorporation_year": req.incorporation_year,
+            "gstin":              req.gstin,
+            "annual_revenue":     req.annual_revenue,
+            "net_profit":         req.net_profit,
+            "total_debt":         req.total_debt,
+            "employee_count":     req.employee_count,
+            "email":              req.email,
+        }.items() if v
+    }
     try:
-        return run_credit_assessment(req.company_name, req.sector, req.requested_loan_cr)
+        return run_credit_assessment(
+            req.company_name, req.sector, req.requested_loan_cr,
+            form_data=form_data,
+        )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except RuntimeError as exc:

@@ -1,17 +1,20 @@
 import React from 'react';
 import {
   LayoutDashboard, FileSearch, Brain, Globe, Award,
-  FileText, MessageSquare, Zap, ChevronRight, Settings, LogOut
+  FileText, MessageSquare, Zap, ChevronRight, Settings, LogOut,
+  ShieldAlert, Target,
 } from 'lucide-react';
 
 const navItems = [
   { id: 'dashboard',       label: 'Dashboard',          icon: LayoutDashboard },
   { id: 'assessment',      label: 'New Assessment',      icon: FileSearch },
   { id: 'analysis',        label: 'AI Analysis',         icon: Brain },
+  { id: 'swot',            label: 'SWOT Analysis',       icon: Target },
   { id: 'research',        label: 'Research Insights',   icon: Globe },
   { id: 'recommendation',  label: 'Credit Decision',     icon: Award },
   { id: 'report',          label: 'CAM Report',          icon: FileText },
   { id: 'docquery',        label: 'Document Q&A',        icon: MessageSquare },
+  { id: 'gstvalidate',     label: 'GST Validation',      icon: ShieldAlert },
 ];
 
 export default function Sidebar({ currentPage, onNavigate }) {

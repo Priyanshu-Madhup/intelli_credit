@@ -631,7 +631,7 @@ def truncate_chunks_by_tokens(chunks: List[Dict], max_tokens: int = 4000) -> Lis
 # 6. FULL PIPELINE
 # ---------------------------------------------------------------------------
 
-def process_document(file_path: str) -> Dict:
+def process_document(file_path: str, doc_type: str = "general", append: bool = False) -> Dict:
     """
     Run the complete document processing pipeline on a PDF file.
 
@@ -640,12 +640,14 @@ def process_document(file_path: str) -> Dict:
         2. Count tokens to decide chunking strategy.
         3. Dynamic LLM chunking (Groq) if tokens > TOKEN_THRESHOLD,
            otherwise simple word-count chunking fallback.
-        4. Attach source and page metadata to each chunk.
+        4. Attach source, doc_type, and page metadata to each chunk.
         5. Generate normalized embeddings (SentenceTransformers).
-        6. Build and persist a FAISS index.
+        6. Build and persist a FAISS index (replace or append).
 
     Args:
         file_path: Path to the input PDF document.
+        doc_type:  Document category tag stored in chunk metadata (default: 'general').
+        append:    If True, add chunks to the existing index rather than replacing it.
 
     Returns:
         Dict with keys:
@@ -679,18 +681,29 @@ def process_document(file_path: str) -> Dict:
             chunks = _simple_chunk(full_text)
         strategy = "token_aware"
 
-        # Step 4: Attach metadata
+        # Step 4: Attach metadata (including confirmed doc_type)
         source_name = os.path.basename(file_path)
         for chunk in chunks:
             chunk["source"] = source_name
+            chunk["doc_type"] = doc_type
             chunk.setdefault("page", None)
 
         # Step 5: Embed
         embeddings = embed_chunks(chunks)
 
-        # Step 6: Index and persist
-        index, _ = create_faiss_index(embeddings)
-        save_index(index, chunks)
+        # Step 6: Index and persist (append or replace)
+        if append:
+            try:
+                existing_index, existing_metadata = load_index()
+                existing_index.add(np.vstack(embeddings))
+                merged_metadata = existing_metadata + chunks
+                save_index(existing_index, merged_metadata)
+            except FileNotFoundError:
+                index, _ = create_faiss_index(embeddings)
+                save_index(index, chunks)
+        else:
+            index, _ = create_faiss_index(embeddings)
+            save_index(index, chunks)
 
         return {
             "num_chunks": len(chunks),

@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { supabase } from './supabase';
+import React, { useState } from 'react';
+// Auth disabled for now — uncomment to re-enable
+// import { supabase } from './supabase';
+// import AuthPage from './pages/AuthPage';
 import Sidebar from './components/Sidebar';
 import TopNav from './components/TopNav';
 import Dashboard from './pages/Dashboard';
@@ -9,53 +11,15 @@ import ResearchInsights from './pages/ResearchInsights';
 import CreditRecommendation from './pages/CreditRecommendation';
 import CAMReport from './pages/CAMReport';
 import DocQuery from './pages/DocQuery';
-import AuthPage from './pages/AuthPage';
+import GSTCrossValidation from './pages/GSTCrossValidation';
+import SWOTAnalysis from './pages/SWOTAnalysis';
 
 export default function App() {
-  const [user, setUser] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  const [user] = useState({ name: 'Guest', email: '' });
   const [page, setPage] = useState('dashboard');
   const [mounted, setMounted] = useState(new Set(['dashboard']));
 
-  useEffect(() => {
-    // Restore existing session on mount
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        const name = session.user.user_metadata?.name || session.user.email;
-        setUser({ name, email: session.user.email });
-      }
-      setAuthLoading(false);
-    });
-
-    // Listen for auth changes (login / logout / token refresh)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) {
-        const name = session.user.user_metadata?.name || session.user.email;
-        setUser({ name, email: session.user.email });
-      } else {
-        setUser(null);
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  const handleLogin = (userData) => setUser(userData);
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-  };
-
-  if (authLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <p className="text-slate-400 text-sm">Loading…</p>
-      </div>
-    );
-  }
-
-  if (!user) return <AuthPage onLogin={handleLogin} />;
+  const handleLogout = () => {};  // no-op while auth is disabled
 
   const handleNavigate = (to) => {
     setPage(to);
@@ -73,10 +37,12 @@ export default function App() {
           {mounted.has('dashboard')      && <div style={show('dashboard')}><Dashboard onNavigate={handleNavigate} /></div>}
           {mounted.has('assessment')     && <div style={show('assessment')}><NewCreditAssessment onNavigate={handleNavigate} /></div>}
           {mounted.has('analysis')       && <div style={show('analysis')}><AIAnalysis onNavigate={handleNavigate} /></div>}
+          {mounted.has('swot')           && <div style={show('swot')}><SWOTAnalysis /></div>}
           {mounted.has('research')       && <div style={show('research')}><ResearchInsights /></div>}
           {mounted.has('recommendation') && <div style={show('recommendation')}><CreditRecommendation onNavigate={handleNavigate} /></div>}
           {mounted.has('report')         && <div style={show('report')}><CAMReport /></div>}
           {mounted.has('docquery')       && <div style={show('docquery')}><DocQuery /></div>}
+          {mounted.has('gstvalidate')    && <div style={show('gstvalidate')}><GSTCrossValidation /></div>}
         </main>
       </div>
     </div>

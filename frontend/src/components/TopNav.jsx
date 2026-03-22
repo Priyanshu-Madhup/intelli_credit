@@ -5,9 +5,12 @@ const pageTitles = {
   dashboard:      { title: 'Dashboard',               subtitle: 'Credit portfolio overview' },
   assessment:     { title: 'New Credit Assessment',   subtitle: 'Upload and analyze company documents' },
   analysis:       { title: 'AI Analysis',             subtitle: 'Automated intelligence insights' },
+  swot:           { title: 'SWOT Analysis',           subtitle: 'Strengths, Weaknesses, Opportunities & Threats from indexed documents' },
   research:       { title: 'Research Insights',       subtitle: 'News and market intelligence' },
   recommendation: { title: 'Credit Recommendation',  subtitle: 'Final AI-powered decision' },
   report:         { title: 'CAM Report',              subtitle: 'Credit Appraisal Memorandum preview' },
+  docquery:       { title: 'Document Q&A',             subtitle: 'Ask questions about uploaded documents' },
+  gstvalidate:    { title: 'GST Cross-Validation',     subtitle: 'Cross-check GST returns vs bank statement for fraud signals' },
 };
 
 export default function TopNav({ currentPage, user, onLogout }) {

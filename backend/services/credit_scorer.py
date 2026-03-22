@@ -74,15 +74,24 @@ Required structure:
 """
 
 
-def run_credit_assessment(company_name: str, sector: str, requested_loan_cr: float) -> Dict:
+def run_credit_assessment(
+    company_name: str,
+    sector: str,
+    requested_loan_cr: float,
+    form_data: Dict | None = None,
+) -> Dict:
     """
     Generate a full AI credit assessment by retrieving context from FAISS
     and asking Groq to produce a structured JSON decision.
+
+    When FAISS has no indexed documents the manually entered form_data fields
+    are used as the context so the assessment still runs without uploaded PDFs.
 
     Args:
         company_name: Name of the applicant company.
         sector: Industry sector of the company.
         requested_loan_cr: Loan amount requested (in Crore INR).
+        form_data: Optional dict of manually entered financial fields.
 
     Returns:
         Parsed credit assessment dict matching the frontend data schema.
@@ -105,11 +114,34 @@ def run_credit_assessment(company_name: str, sector: str, requested_loan_cr: flo
                     f"[{chunk.get('section', 'Document')}]\n{chunk['content']}"
                 )
 
-    if not context_parts:
-        raise RuntimeError(
-            "No documents have been indexed yet. "
-            "Please upload and process financial documents before running the credit assessment."
-        )
+    rag_available = bool(context_parts)
+
+    if not rag_available:
+        # Build synthetic context from manually entered form data
+        fd = form_data or {}
+        lines = [
+            f"Company Name: {company_name}",
+            f"Sector: {sector}",
+            f"Loan Requested: ₹{requested_loan_cr} Cr",
+        ]
+        field_labels = {
+            "location":           "Registered Location",
+            "promoter_name":      "Promoter / Director",
+            "incorporation_year": "Year of Incorporation",
+            "gstin":              "GSTIN",
+            "annual_revenue":     "Annual Revenue",
+            "net_profit":         "Net Profit (PAT)",
+            "total_debt":         "Total Debt / Borrowings",
+            "employee_count":     "Employee Count",
+            "email":              "Contact Email",
+        }
+        for key, label in field_labels.items():
+            val = fd.get(key)
+            if val:
+                lines.append(f"{label}: {val}")
+
+        synthetic_context = "\n".join(lines)
+        context_parts = [f"[Applicant Form Data]\n{synthetic_context}"]
 
     # Budget: 8 chunks × ~225 tokens avg = ~1800 tokens context + ~500 overhead + 3000 response
     trimmed_parts = truncate_chunks_by_tokens(
@@ -119,17 +151,33 @@ def run_credit_assessment(company_name: str, sector: str, requested_loan_cr: flo
     context = "\n\n".join(c["content"] for c in trimmed_parts)
 
     client = Groq(api_key=GROQ_API_KEY)
+
+    if rag_available:
+        context_instruction = (
+            "Base your assessment STRICTLY on the document excerpts provided below.\n"
+            "Extract real figures, dates, names and facts exactly as they appear in the documents.\n"
+            "Do NOT fabricate numbers or assume data not present in the documents."
+        )
+        context_header = "Document excerpts from uploaded financial documents"
+    else:
+        context_instruction = (
+            "No financial documents have been uploaded. Base your assessment on the applicant "
+            "details provided below and your general knowledge of the sector.\n"
+            "Where specific financials are missing, provide conservative estimates appropriate "
+            "for a company of this type, clearly noting uncertainty in your reasoning.\n"
+            "Set fields to 'N/A' when data is genuinely unknown rather than guessing specific figures."
+        )
+        context_header = "Applicant details (no documents uploaded)"
+
     prompt = (
         f"You are a senior credit analyst at a bank. You are assessing a loan application "
         f"from '{company_name}' (sector: {sector}) for ₹{requested_loan_cr} Cr.\n\n"
         f"CRITICAL INSTRUCTIONS:\n"
-        f"1. Base your assessment STRICTLY on the document excerpts provided below.\n"
-        f"2. Extract real figures, dates, names and facts exactly as they appear in the documents.\n"
-        f"3. PAT (Profit After Tax) = net_profit. Map PAT values to the net_profit field.\n"
-        f"4. Do NOT fabricate numbers or assume data not present in the documents.\n"
-        f"5. If a metric cannot be found in the documents, use null for numbers and 'N/A' for strings. NEVER use '\u2014' or any dash as a JSON value.\n"
-        f"6. The company name in your response should match what appears in the documents.\n\n"
-        f"Document excerpts from uploaded financial documents:\n{context}\n\n"
+        f"1. {context_instruction}\n"
+        f"2. PAT (Profit After Tax) = net_profit. Map PAT values to the net_profit field.\n"
+        f"3. If a metric cannot be found, use null for numbers and 'N/A' for strings. NEVER use '—' or any dash as a JSON value.\n"
+        f"4. The company name in your response should match the applicant name.\n\n"
+        f"{context_header}:\n{context}\n\n"
         f"Produce a complete credit assessment as structured JSON:\n"
         f"{_SCHEMA_DESCRIPTION}"
     )

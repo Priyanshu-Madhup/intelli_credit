@@ -32,7 +32,7 @@ export async function uploadDocuments(filesMap) {
  * @param {number} requestedLoanCr
  * @returns {Promise<Object>} - credit assessment object
  */
-export async function runAssessment(companyName, sector, requestedLoanCr) {
+export async function runAssessment(companyName, sector, requestedLoanCr, formData = {}) {
   const res = await fetch(`${BASE_URL}/assess`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -40,6 +40,7 @@ export async function runAssessment(companyName, sector, requestedLoanCr) {
       company_name: companyName,
       sector,
       requested_loan_cr: requestedLoanCr,
+      ...formData,
     }),
   });
   if (!res.ok) {
@@ -178,4 +179,41 @@ export async function synthesizeResearch(companyName, sector, researchResults) {
     throw new Error(err.detail || 'Synthesis failed');
   }
   return res.json();
+}
+
+/**
+ * Cross-validate GST returns vs bank statement.
+ * Calls POST /gst-validate/cross-validate
+ * @param {File} gstFile  — GST returns PDF
+ * @param {File} bankFile — Bank statement PDF
+ * @returns {Promise<Object>} — structured cross-validation analysis
+ */
+export async function crossValidateGST(gstFile, bankFile) {
+  const formData = new FormData();
+  formData.append('gst_file', gstFile);
+  formData.append('bank_file', bankFile);
+  const res = await fetch(`${BASE_URL}/gst-validate/cross-validate`, {
+    method: 'POST',
+    body: formData,
+  });
+  return res.json();
+}
+
+/**
+ * Generate a Word (.docx) CAM document from the backend.
+ * Sends the assessment + company data, receives a binary .docx file.
+ * @param {Object} payload — full assessment + company data
+ * @returns {Promise<Blob>} — the .docx file as a Blob
+ */
+export async function generateCAMDocx(payload) {
+  const res = await fetch(`${BASE_URL}/cam/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'CAM generation failed');
+  }
+  return res.blob();
 }

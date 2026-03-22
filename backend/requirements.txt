@@ -9,3 +9,4 @@ tiktoken
 numpy
 python-dotenv
 huggingface-hub
+python-docx
